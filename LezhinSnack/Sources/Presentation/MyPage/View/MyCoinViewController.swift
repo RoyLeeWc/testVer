@@ -14,10 +14,19 @@ import Pageboy
 
 
 protocol ChildCoinHistoryDelegate: AnyObject {
-    func loadCoinChargeHistory()
-    func loadUsageHistory()
+    
+    func changeChargeFilter(_ filter: CoinChargeFilter)
+    
+    func loadMoreCoinChargesIfNeeded(visibleIndex: Int)
+    
+    func loadMoreUsageIfNeeded(visibleIndex: Int)
+     
+    
     func reloadCoinChargeHistory()
     func reloadUsageHistory()
+    
+    func loadCoinChargeHistory()
+    func loadUsageHistory()
 }
 
 
@@ -45,8 +54,13 @@ final class MyCoinViewController: TabmanViewController, ChildNavigationBarPresen
     
     let childNavigationBar = ChildNavigationBar()
     
-    var purchaseHistory: [PurchaseHistoryEntity] = []
-    var coinChargeHistory: [CoinChargeHistoryEntity] = []
+//    var purchaseHistory: [PurchaseHistoryEntity] = []
+//    var coinChargeHistory: [CoinChargeHistoryEntity] = []
+    
+    // 교체
+    var coinChargeHistory: [CoinChargeEntity] = []
+    var usageHistory: [CoinUsageEntity] = []
+    
     
     lazy var tableView = {
         return UITableView()
@@ -121,38 +135,56 @@ final class MyCoinViewController: TabmanViewController, ChildNavigationBarPresen
     
     
     func bind() {
-        viewModel.$coinChargeHistory
+        
+        // 충전 내역
+//        viewModel.$coinCharges
+//            .receive(on: RunLoop.main)
+//            .sink { [weak self] items in
+//                guard let self, let items else { return }
+//                self.coinChargeHistory = items
+//                (self.viewControllers[0] as? RechargeHistoryViewController)?
+//                    .applySnapshot(items: items)
+//            }
+//            .store(in: &subscriptions)
+        
+        viewModel.$coinCharges
             .receive(on: RunLoop.main)
-            .sink { [weak self] coinChargeHistory in
-                guard let coinChargeHistory = coinChargeHistory else { return }
-                self?.coinChargeHistory = coinChargeHistory
-                
-                guard let rechargeHistoryVC = self?.viewControllers[0] as? RechargeHistoryViewController else { return }
-                rechargeHistoryVC.applySnapshot(items: coinChargeHistory)
+            .sink { [weak self] items in
+                guard let self else { return }
+                self.coinChargeHistory = items
+                if let vc = self.viewControllers[0] as? RechargeHistoryViewController {
+                    vc.loadViewIfNeeded()                
+                    vc.applySnapshot(items: items)
+                }
             }
             .store(in: &subscriptions)
         
-        viewModel.$purchaseHistory
+        // 사용 내역
+        viewModel.$coinUsage
             .receive(on: RunLoop.main)
-            .sink { [weak self] purchaseHistory in
-                guard let purchaseHistory = purchaseHistory else { return }
-                self?.purchaseHistory = purchaseHistory
-                
-                guard let usageHistoryViewController = self?.viewControllers[1] as? UsageHistoryViewController else { return }
-                usageHistoryViewController.applySnapshot(items: purchaseHistory)
+            .sink { [weak self] items in
+                guard let self else { return }
+                self.usageHistory = items
+                if let vc = self.viewControllers[1] as? UsageHistoryViewController {
+                    vc.loadViewIfNeeded()
+                    vc.applySnapshot(items: items)
+                }
             }
             .store(in: &subscriptions)
         
-        viewModel.$userCoinEntity
+        // 보유 코인 헤더
+        viewModel.$userCoin
             .receive(on: RunLoop.main)
-            .sink { [weak self] userCoinEntity in
-                guard let userCoinEntity = userCoinEntity else { return }
-                
-                guard let rechargeHistoryVC = self?.viewControllers[0] as? RechargeHistoryViewController else { return }
-                guard let headerView = rechargeHistoryVC.getHeaderView() else { return }
-                let totalCoin = userCoinEntity.coin + userCoinEntity.bonusCoin
-                headerView.setCoinInfoViewText(setCoinText: "\(totalCoin)",
-                                               expiredCoinText: "\(userCoinEntity.expiringWindowDays)")
+            .sink { [weak self] uc in
+                guard let self, let uc else { return }
+                if let header = (self.viewControllers[0] as? RechargeHistoryViewController)?
+                    .getHeaderView() {
+                    let total = uc.coin + uc.bonusCoin
+                    header.setCoinInfoViewText(
+                        setCoinText: "\(total)",
+                        expiredCoinText: "\(uc.expiringCoin)" // 숫자는 만료 예정 코인 수로
+                    )
+                }
             }
             .store(in: &subscriptions)
     }
@@ -190,22 +222,34 @@ extension MyCoinViewController: PageboyViewControllerDataSource, TMBarDataSource
 
 extension MyCoinViewController: ChildCoinHistoryDelegate {
     
-    func reloadCoinChargeHistory() {
-        viewModel.fetchUserCoinWithCoinChargeHistory()
+    func changeChargeFilter(_ filter: CoinChargeFilter) {
+        viewModel.reloadCoinCharges(filter: filter)
     }
     
-    func reloadUsageHistory() {
-        viewModel.fetchPurchaseHistory()
+    func loadMoreCoinChargesIfNeeded(visibleIndex: Int) {
+        viewModel.fetchNextCoinChargesIfNeeded(visibleIndex: visibleIndex)
+    }
+    
+    func loadMoreUsageIfNeeded(visibleIndex: Int) {
+        viewModel.fetchNextCoinUsageIfNeeded(visibleIndex: visibleIndex)
     }
     
     func loadCoinChargeHistory() {
         viewModel.fetchCoinChargeHistory()
+        
     }
-    
     func loadUsageHistory() {
-        viewModel.fetchPurchaseHistory()
+        
+        viewModel.fetchCoinUsageHistory()
     }
     
+    func reloadCoinChargeHistory() {
+        viewModel.reloadCoinCharges()
+    }
+    
+    func reloadUsageHistory() {
+        viewModel.reloadCoinUsage()
+    }
     
 }
 

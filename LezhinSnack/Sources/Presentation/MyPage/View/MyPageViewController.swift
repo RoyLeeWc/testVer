@@ -41,6 +41,8 @@ final class MyPageViewController: UIViewController, TitleRootNavigationBarPresen
     }
     
     let rootNavigationBar = TitleRootNavigationBar()
+    // 구독배너 뷰
+    private var membershipStateView: LZSnackMembershipView?
     
     // 스크롤 뷰
     private let scrollView = UIScrollView()
@@ -103,6 +105,30 @@ final class MyPageViewController: UIViewController, TitleRootNavigationBarPresen
         return button
     }()
     
+    let nicknameEditButton: LZSnackEditButton = {
+        let editButton = LZSnackEditButton()
+        let customStyle = LZSnackEditButton.Style(
+            font: .pretendardMedium(size: 16),
+            textColor: .white
+        )
+        editButton.applyStyle(customStyle)
+        editButton.contentHorizontalAlignment = .right
+        return editButton
+    }()
+    private var isEditingNickname = false
+    private let maxNicknameLen = 10
+    private var lastValidNickname = ""
+    private var expiringCoin = 0
+    
+    private let nicknameTextField: LZSnackSearchTextField = {
+        let textField = LZSnackSearchTextField()
+        textField.configureForNickname()
+        textField.isHidden = true
+        textField.alpha = 0
+        textField.layer.cornerRadius = 8
+        
+        return textField
+    }()
     
     // 코인정보 뷰
     private let coinInfoContainerView: UIView = {
@@ -203,6 +229,14 @@ final class MyPageViewController: UIViewController, TitleRootNavigationBarPresen
         setupMembershipView()
     }
     
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        // push/pop/모달 전부 포함해서 항상 키보드/편집 종료
+        if isEditingNickname { finishNicknameEditing(save: false, animated: false) }
+        else { view.endEditing(true) }
+    }
+    
+    
     private func setupUI() {
         
         view.backgroundColor = .backgroundDefault
@@ -248,10 +282,15 @@ final class MyPageViewController: UIViewController, TitleRootNavigationBarPresen
         scrollView.addPullToRefresh() { [weak self] in
             self?.fetchData()
         }
+        
+        scrollView.keyboardDismissMode = .onDrag     // 드래그로 키보드 내려감
+        scrollView.delegate = self
     }
     
     private func fetchData() {
         viewModel.fetchUserCoinBalance()
+        viewModel.fetchUserInfo()
+        viewModel.checkSubscription()
     }
     
     private func setupUserTypeView() {
@@ -268,6 +307,29 @@ final class MyPageViewController: UIViewController, TitleRootNavigationBarPresen
             make.height.equalTo(34)
         }
         
+        userTypeContainerView.addSubview(nicknameEditButton)
+        nicknameEditButton.snp.makeConstraints { make in
+            make.leading.equalTo(userNameLabel.snp.trailing).offset(8)
+            make.centerY.equalTo(userNameLabel.snp.centerY)
+            make.height.equalTo(16)
+            make.width.equalTo(20)
+        }
+        nicknameEditButton.addTarget(self, action: #selector(nicknameEditButtonTapped), for: .touchUpInside)
+
+        // 4) 닉네임 편집 텍스트필드 (처음엔 숨김)
+        userTypeContainerView.addSubview(nicknameTextField)
+        nicknameTextField.snp.makeConstraints { make in
+            make.leading.equalTo(userNameLabel.snp.leading)
+            make.centerY.equalTo(userNameLabel.snp.centerY)   // ← 라벨과 같은 Y (오버레이)
+            make.trailing.equalToSuperview().inset(0)         // loginButton 참조 제거
+            make.height.equalTo(34)
+        }
+        nicknameTextField.lzsSearchBarDelegate = self
+        nicknameTextField.addTarget(self, action: #selector(onNicknameEditingChanged(_:)), for: .editingChanged)
+        nicknameTextField.returnKeyType = .done
+        nicknameTextField.isHidden = true
+        nicknameTextField.alpha = 0
+        nicknameTextField.delegate = self
         
         userTypeContainerView.addSubview(userLoginTypeImageView)
         userLoginTypeImageView.snp.makeConstraints { make in
@@ -290,15 +352,6 @@ final class MyPageViewController: UIViewController, TitleRootNavigationBarPresen
         }
         
         loginButton.addTarget(self, action: #selector(loginButtonOnTapped), for: .touchUpInside)
-    }
-    
-    @objc func loginButtonOnTapped(_ sender: Any) {
-        guard let vc = AppContext.container.resolve(UserAuthViewController.self) else { return }
-        navigationController?.pushHidesBottomBarViewController(vc)
-    }
-    
-    @objc func logoutButtonTapped(_ sender: Any) {
-        viewModel.requestLogout()
     }
     
     private func setupCoinInfoView() {
@@ -381,11 +434,35 @@ final class MyPageViewController: UIViewController, TitleRootNavigationBarPresen
         myCoinLabel.addGestureRecognizer(tap)
     }
     
+    @objc func loginButtonOnTapped(_ sender: Any) {
+        guard let vc = AppContext.container.resolve(UserAuthViewController.self) else { return }
+        navigationController?.pushHidesBottomBarViewController(vc)
+    }
     
+    @objc func logoutButtonTapped(_ sender: Any) {
+        onMain { [weak self] in
+            let popup = LZSnackAlertPopupView(
+                width: 320,
+                height: 222,
+                title: "로그아웃 하시겠어요?",
+                message: "콘텐츠, 결제/코인 정보 등 회원님의 정보는\n안전하게 보관됩니다.",
+                leftButtonTitle: "로그인 유지",
+                leftHandler: { },
+                rightButtonTitle: "로그아웃",
+                rightHandler: { [weak self] in
+                    self?.viewModel.requestLogout()
+                }
+            )
+            popup.show()
+        }
+        
+        
+    }
+
     @objc func myCoinLabelTapped() {
         let currentTotalCoinLabelText: String = currentTotalCoinLabel.text ?? "0"
         guard let vc = AppContext.container.resolve(MyCoinViewController.self,
-                                                    arguments: currentTotalCoinLabelText, "0") else { return }
+                                                    arguments: currentTotalCoinLabelText,String(expiringCoin)) else { return }
         navigationController?.pushHidesBottomBarViewController(vc)
     }
     
@@ -395,6 +472,30 @@ final class MyPageViewController: UIViewController, TitleRootNavigationBarPresen
                                                     argument: currentTotalCoinLabelText ) else { return }
         vc.delegate = self
         navigationController?.pushHidesBottomBarViewController(vc)
+    }
+    
+    @objc private func nicknameEditButtonTapped() {
+        if Defaults.userLoginType == AuthProvider.IOS_GUEST.rawValue {
+            LZSnackToastHelper.showOnce(on: view, toast: LZSnackToastView(text: "로그인 후 닉네임을 변경할 수 있어요"), duration: 2.0)
+            return
+        }
+        startNicknameEditing()
+    }
+    
+    private func startNicknameEditing() {
+        guard !isEditingNickname else { return }
+        isEditingNickname = true
+        userNameLabel.isHidden = true
+        nicknameEditButton.isHidden = true
+
+        nicknameTextField.text = userNameLabel.text
+        lastValidNickname = nicknameTextField.text ?? ""
+        nicknameTextField.isHidden = false
+        userTypeContainerView.bringSubviewToFront(nicknameTextField)
+        nicknameTextField.sendActions(for: .editingChanged) // X 버튼 표시 갱신
+        nicknameTextField.becomeFirstResponder()
+
+        UIView.animate(withDuration: 0.2) { self.nicknameTextField.alpha = 1 }
     }
     
     private func setupMembershipView() {
@@ -408,22 +509,98 @@ final class MyPageViewController: UIViewController, TitleRootNavigationBarPresen
         
         membershipContainerView.subviews.forEach { $0.removeFromSuperview() }
         
-        let membershipStateView = LZSnackMembershipView(type: LZSnackMembershipState.allCases.randomElement()!)
-        membershipContainerView.addSubview(membershipStateView)
-        membershipStateView.snp.makeConstraints { make in
+        let membershipView = LZSnackMembershipView(type: .neverSubscribed)
+        membershipContainerView.addSubview(membershipView)
+        membershipView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
-        
+        membershipStateView = membershipView
         
         membershipContainerView.isUserInteractionEnabled = true
         let tapGestureRecognizer = UITapGestureRecognizer(target: self, action: #selector(membershipContainerTapped))
         membershipContainerView.addGestureRecognizer(tapGestureRecognizer)
     }
     
-    @objc private func membershipContainerTapped() {
-        guard let vc = AppContext.container.resolve(MembershipViewController.self) else { return }
-        navigationController?.pushHidesBottomBarViewController(vc)
+    private func finishNicknameEditing(save: Bool, animated: Bool = true) {
+        guard isEditingNickname else { return }
+        isEditingNickname = false
         
+        let raw = nicknameTextField.text ?? ""
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        if save {
+            if trimmed.isEmpty {
+                LZSnackToastHelper.showOnce(on: view, toast: LZSnackToastView(text: "닉네임을 입력해 주세요"), duration: 1.5)
+            } else if hasDisallowed(trimmed) {
+                LZSnackToastHelper.showOnce(on: view, toast: LZSnackToastView(text: "이모티콘/특수문자는 사용할 수 없어요"), duration: 1.5)
+            } else if trimmed.count > maxNicknameLen {
+                LZSnackToastHelper.showOnce(on: view, toast: LZSnackToastView(text: "닉네임은 최대 10자까지예요"), duration: 1.5)
+            } else {
+                viewModel.updateNickname(trimmed)
+//                userNameLabel.text = trimmed   // API 붙일 땐 여기서 호출
+            }
+        }
+        
+        nicknameTextField.resignFirstResponder()
+        
+        let hideBlock = {
+            self.nicknameTextField.alpha = 0
+        }
+        let completeBlock: (Bool) -> Void = { _ in
+            self.nicknameTextField.isHidden = true
+            self.userNameLabel.isHidden = false
+            self.nicknameEditButton.isHidden = false
+        }
+        
+        if animated {
+            UIView.animate(withDuration: 0.18, animations: hideBlock, completion: completeBlock)
+        } else {
+            hideBlock()
+            completeBlock(true)
+        }
+    }
+
+    
+    @objc private func onNicknameEditingChanged(_ tf: UITextField) {
+        // 한글 조합 중엔 제한 X (최종 커밋에 검사)
+        guard tf.markedTextRange == nil else { return }
+        let text = tf.text ?? ""
+        if hasDisallowed(text) || trimmedLen(text) > maxNicknameLen {
+            tf.text = lastValidNickname   // 불가 → 롤백
+        } else {
+            lastValidNickname = text      // 통과 → 최신 유효값 기억
+        }
+    }
+    
+    @objc private func keyboardWillHide() {
+        // 키보드 내려갈 때 편집 중이면 취소(저장 X)
+        if isEditingNickname { finishNicknameEditing(save: false) }
+    }
+    
+    @objc private func membershipContainerTapped() {
+        let info = viewModel.subscriptionInfo
+        let state = viewModel.membershipState
+        
+        ///------------구독자 서비스 적용전까지 만---------
+        if let vc = AppContext.container.resolve(MembershipViewController.self) {
+            vc.configure(subscriptionInfo: info, state: .monthlySubscriptionActive)
+            navigationController?.pushHidesBottomBarViewController(vc)
+        }
+        
+//        if state == .neverSubscribed {
+//            
+//        } else {
+//   
+//            if let vc = AppContext.container.resolve(MembershipViewController.self) {
+//                vc.configure(subscriptionInfo: info, state: .annualSubscriptionActive)
+//                navigationController?.pushHidesBottomBarViewController(vc)
+//            }
+//        }
+        
+        
+//        guard let vc = AppContext.container.resolve(MembershipViewController.self) else { return }
+//        navigationController?.pushHidesBottomBarViewController(vc)
+//        
 //        vc.modalPresentationStyle = .overCurrentContext
 //        self.present(vc, animated: true)
     }
@@ -471,18 +648,42 @@ final class MyPageViewController: UIViewController, TitleRootNavigationBarPresen
     
     
     @objc private func menuButtonTapped(_ sender: UIButton) {
+        if isEditingNickname { finishNicknameEditing(save: false, animated: false) }
+        else { view.endEditing(true) } // 혹시 모를 firstResponder 정리
+        
         guard let type = MenuType(rawValue: sender.tag) else { return }
         switch type {
         case .paymentHistory:
-            guard let vc = AppContext.container.resolve(PaymentHistoryViewController.self) else { return }
-            navigationController?.pushHidesBottomBarViewController(vc)
+            if Defaults.userLoginType == SnsLoginType.guestMode.rawValue {
+                onMain { [weak self] in
+                    let popup = LZSnackAlertPopupView(
+                        width: 320,
+                        height: 222,
+                        title: "로그인 안내",
+                        message: "게스트 모드에서는 불가능한 메뉴 입니다.",
+                        leftButtonTitle: "닫기",
+                        leftHandler: { },
+                        rightButtonTitle: "로그인 하기",
+                        rightHandler: { [weak self] in
+                            guard let vc = AppContext.container.resolve(UserAuthViewController.self) else { return }
+                            self?.navigationController?.pushHidesBottomBarViewController(vc)
+                        }
+                    )
+                    popup.show()
+                }
+            } else {
+                guard let vc = AppContext.container.resolve(PaymentHistoryViewController.self) else { return }
+                navigationController?.pushHidesBottomBarViewController(vc)
+            }
+            
         case .myInquiries:
             break
         case .customerSupport:
-            break
+            guard let vc = AppContext.container.resolve(CustomerSupportViewController.self) else { return }
+                navigationController?.pushHidesBottomBarViewController(vc)
         case .termsOfService:
-            guard let vc = AppContext.container.resolve(SignUpAgreementListViewController.self) else { return }
-            navigationController?.pushHidesBottomBarViewController(vc)
+            guard let vc = AppContext.container.resolve(TermsListViewController.self) else { return }
+                navigationController?.pushHidesBottomBarViewController(vc)
         case .settings:
             guard let vc = AppContext.container.resolve(SettingViewController.self) else { return }
             navigationController?.pushHidesBottomBarViewController(vc)
@@ -503,6 +704,16 @@ final class MyPageViewController: UIViewController, TitleRootNavigationBarPresen
             .sink { [weak self] _ in
                 self?.setLocalizedText()
             }.store(in: &subscriptions)
+        
+        viewModel.$membershipState
+            .combineLatest(viewModel.$subscriptionInfo)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] state, info in
+                guard let self else { return }
+                if self.membershipStateView == nil { self.setupMembershipView() }
+                self.membershipStateView?.configure(state: state, info: info)
+            }
+            .store(in: &subscriptions)
         
         viewModel.$isLogoutSuccess
             .receive(on: RunLoop.main)
@@ -530,20 +741,98 @@ final class MyPageViewController: UIViewController, TitleRootNavigationBarPresen
                 self?.scrollView.refreshControl?.endRefreshing()
                 let paymentCoinString = "마이_내코인_결제코인".localized
                 let bonusCoinString = "마이_내코인_보너스코인".localized
-                self?.currentTotalCoinLabel.text = "\(userCoinEntity.coin)"
+                let totalCoin = userCoinEntity.coin + userCoinEntity.bonusCoin
+                self?.currentTotalCoinLabel.text = "\(totalCoin)"
+                self?.expiringCoin = Int(userCoinEntity.expiringCoin)
                 self?.currentCoinDescriptionLabel.text = "\(paymentCoinString) \(userCoinEntity.coin) ・ \(bonusCoinString) \(userCoinEntity.bonusCoin)"
                 self?.currentCoinDescriptionLabel.highlightNumbers(with: UIColor(.brandRed))
             }.store(in: &subscriptions)
+        
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(keyboardWillHide),
+                                               name: UIResponder.keyboardWillHideNotification,
+                                               object: nil)
+        
+        viewModel.$updatedNickname
+            .compactMap { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] nick in
+                guard let self = self else { return }
+                self.userNameLabel.text = nick
+                
+                // 편집 UI 정리
+                self.nicknameTextField.resignFirstResponder()
+                self.nicknameTextField.isHidden = true
+                self.nicknameTextField.alpha = 0
+                self.userNameLabel.isHidden = false
+                self.nicknameEditButton.isHidden = false
+                self.isEditingNickname = false
+                
+            }
+            .store(in: &subscriptions)
+        
+        // 실패: 토스트 표시 (UI는 그대로 유지해서 사용자가 수정 후 재시도 가능)
+        viewModel.$updateNicknameError
+            .compactMap { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] msg in
+                guard let self = self else { return }
+                let toast = LZSnackToastView(text: msg)
+                LZSnackToastHelper.showOnce(on: self.view, toast: toast, duration: 1.8)
+            }
+            .store(in: &subscriptions)
+        
+        viewModel.$userInfo
+            .compactMap { $0 }                 //
+            .receive(on: RunLoop.main)
+            .sink { [weak self] (info: UserInfoEntity) in
+                guard let self = self else { return }
+                if LZSUtil.isNotGuestMode() {
+                    self.userNameLabel.text = info.nickname
+                    self.userEmailLabel.text = info.email ?? "이메일 없음"
+                } else {
+                    self.userEmailLabel.text = info.nickname ?? ""
+                }
+                
+                switch info.joinType {
+                case .apple:
+                    self.logoutButton.isHidden = false
+                    self.loginButton.isHidden = true
+                    self.userLoginTypeImageView.isHidden = false
+                    self.userLoginTypeImageView.image = UIImage(named: "apple_logo_white")
+                case .google:
+                    self.logoutButton.isHidden = false
+                    self.loginButton.isHidden = true
+                    self.userLoginTypeImageView.isHidden = false
+                    self.userLoginTypeImageView.image = UIImage(named: "google_logo")
+                case .facebook:
+                    self.logoutButton.isHidden = false
+                    self.loginButton.isHidden = true
+                    self.userLoginTypeImageView.isHidden = false
+                    self.userLoginTypeImageView.image = UIImage(named: "facebook_logo")
+                case .lezhin:
+                    self.logoutButton.isHidden = false
+                    self.loginButton.isHidden = true
+                    self.userLoginTypeImageView.isHidden = false
+                    self.userLoginTypeImageView.image = UIImage(named: "lezhin_logo")
+                    
+                default:
+                    break
+                }
+            }
+            .store(in: &subscriptions)
+        
+        
     }
     
     private func setUserInfoText() {
-        if Defaults.userLoginType == SnsLoginType.guestMode.rawValue {
+        if Defaults.userLoginType == AuthProvider.IOS_GUEST.rawValue {
             userNameLabel.text = "마이_게스트_타이틀".localized
             userEmailLabel.text = Defaults.userEmail
             logoutButton.isHidden = true
             loginButton.isHidden = false
             userLoginTypeImageView.isHidden = true
-            
+            nicknameEditButton.isHidden = true
             userEmailLabel.snp.updateConstraints { make in
                 make.leading.equalTo(userLoginTypeImageView.snp.trailing).offset(-16)
             }
@@ -554,14 +843,17 @@ final class MyPageViewController: UIViewController, TitleRootNavigationBarPresen
             logoutButton.isHidden = false
             loginButton.isHidden = true
             userLoginTypeImageView.isHidden = false
+            nicknameEditButton.isHidden = false
             
             switch Defaults.userLoginType {
-            case SnsLoginType.apple.rawValue:
+            case AuthProvider.APPLE.rawValue:
                 userLoginTypeImageView.image = UIImage(named: "apple_logo_white")
-            case SnsLoginType.google.rawValue:
+            case AuthProvider.GOOGLE.rawValue:
                 userLoginTypeImageView.image = UIImage(named: "google_logo")
-            case SnsLoginType.facebook.rawValue:
+            case AuthProvider.FACEBOOK.rawValue:
                 userLoginTypeImageView.image = UIImage(named: "facebook_logo")
+            case AuthProvider.LEZHIN.rawValue:
+                userLoginTypeImageView.image = UIImage(named: "lezhin_logo")
             default:
                 break
             }
@@ -576,9 +868,58 @@ final class MyPageViewController: UIViewController, TitleRootNavigationBarPresen
 //        changeLanguageLabel.text = "changeLanguage".localized
 //        faqLabel.text = "faq".localized
     }
+    private func trimmedLen(_ s: String) -> Int {
+        s.trimmingCharacters(in: .whitespacesAndNewlines).count
+    }
+
+    // 한글/영문/숫자/공백만 허용 (이모지·특수문자 불가)
+    private func hasDisallowed(_ s: String) -> Bool {
+        for sc in s.unicodeScalars {
+            if sc.properties.isEmoji || sc.properties.isEmojiPresentation { return true } // 이모지 불가
+            let v = sc.value
+            let isSpace     = (v == 0x20)                             // space
+            let isDigit     = (0x30...0x39).contains(v)
+            let isLatin     = (0x41...0x5A).contains(v) || (0x61...0x7A).contains(v)
+            let isHangulSyl = (0xAC00...0xD7A3).contains(v)           // 한글 음절
+            let isHangulJamo = (0x1100...0x11FF).contains(v) || (0x3130...0x318F).contains(v) // 자모/호환
+            if !(isSpace || isDigit || isLatin || isHangulSyl || isHangulJamo) { return true }
+        }
+        return false
+    }
     
 }
 
+extension MyPageViewController: UITextFieldDelegate, LZSnackSearchTextFieldDelegate {
+    func searchTextFieldDidClear(_ textField: LZSnackSearchTextField) {
+        
+    }
+    
+    
+    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
+        guard textField === nicknameTextField else { return true }
+        if textField.markedTextRange != nil { return true } // 조합 중
+        let current = textField.text ?? ""
+        guard let r = Range(range, in: current) else { return true }
+        let next = current.replacingCharacters(in: r, with: string)
+        
+        if hasDisallowed(next) { return false }
+        if trimmedLen(next) > maxNicknameLen { return false } // 10자(양끝 공백 제외) 초과 차단
+        return true
+    }
+    
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        guard textField === nicknameTextField else { return true }
+        finishNicknameEditing(save: true)   // ✅ 완료(확인/엔터)로 저장
+        return false
+    }
+    
+}
+
+extension MyPageViewController: UIScrollViewDelegate {
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        if isEditingNickname { finishNicknameEditing(save: false) }
+    }
+}
 
 extension MyPageViewController: InAppPurchaseDismissNotifying {
     

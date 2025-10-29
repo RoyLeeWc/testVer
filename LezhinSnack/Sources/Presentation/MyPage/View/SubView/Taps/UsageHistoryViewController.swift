@@ -15,26 +15,53 @@ final class UsageHistoryViewController: UIViewController {
     }
     
     private var collectionView: UICollectionView!
-    private var dataSource: UICollectionViewDiffableDataSource<Section, PurchaseHistoryEntity>!
+    private var dataSource: UICollectionViewDiffableDataSource<Section, CoinUsageEntity>!
     private var overlayEditView: UIView?
+    
+    private let emptyContentsLabel: UILabel = {
+        let label = UILabel()
+        label.font = .pretendardMedium(size: 14)
+        label.textColor = .white
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        return label
+    }()
+    
+    private var pendingItems: [CoinUsageEntity]?
     
     weak var delegate: ChildCoinHistoryDelegate?
     
     override func viewDidLoad() {
         super.viewDidLoad()
         setupUI()
+        
+        if let items = pendingItems {
+            pendingItems = nil
+            applySnapshot(items: items)
+        }
+        
     }
     
     private func setupUI() {
         view.backgroundColor = UIColor(.backgroundDefault)
         
-//        setCoinInfoViewText()
-        
         configureCollectionView()
         configureDataSource()
-        
+        configureEmptyContentLabel()
         delegate?.loadUsageHistory()
     }
+    
+    private func configureEmptyContentLabel() {
+        emptyContentsLabel.text = "내목록_빈시청목록_타이틀".localized
+        collectionView.backgroundView = emptyContentsLabel
+    }
+    
+    private func updateEmptyState() {
+        let itemCount = dataSource.snapshot().numberOfItems
+        collectionView.isHidden = false
+        collectionView.backgroundView?.isHidden = (itemCount != 0)
+    }
+    
     
     private func configureCollectionView() {
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: createLayout())
@@ -57,7 +84,8 @@ final class UsageHistoryViewController: UIViewController {
         
         collectionView.addPullToRefresh { [weak self] in
             self?.initializeEmptySnapshot()
-            self?.delegate?.loadUsageHistory()
+//            self?.delegate?.loadUsageHistory()
+            self?.delegate?.reloadUsageHistory()
         }
     }
     
@@ -77,8 +105,7 @@ final class UsageHistoryViewController: UIViewController {
     }
     
     private func configureDataSource() {
-        // Diffable Data Source 설정: 커스텀 셀 사용
-        dataSource = UICollectionViewDiffableDataSource<Section, PurchaseHistoryEntity>(collectionView: collectionView) { [weak self] collectionView, indexPath, item -> UICollectionViewCell? in
+        dataSource = UICollectionViewDiffableDataSource<Section, CoinUsageEntity>(collectionView: collectionView) { [weak self] collectionView, indexPath, item -> UICollectionViewCell? in
             guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: UsageCell.reuseIdentifier, for: indexPath) as? UsageCell else { return nil }
             
             cell.configure(item)
@@ -88,21 +115,32 @@ final class UsageHistoryViewController: UIViewController {
     }
     
     private func initializeEmptySnapshot() {
-        var snapshot = NSDiffableDataSourceSnapshot<Section, PurchaseHistoryEntity>()
+        var snapshot = NSDiffableDataSourceSnapshot<Section, CoinUsageEntity>()
         snapshot.appendSections([.history])
         snapshot.appendItems([])
         dataSource.apply(snapshot, animatingDifferences: true)
     }
     
-    func applySnapshot(items: [PurchaseHistoryEntity] = []) {
+    func applySnapshot(items: [CoinUsageEntity]) {
+        guard let dataSource = dataSource else {
+            // 아직 dataSource가 없으면 보관
+            pendingItems = items
+            return
+        }
         collectionView.refreshControl?.endRefreshing()
-        var snapshot = NSDiffableDataSourceSnapshot<Section, PurchaseHistoryEntity>()
+        var snapshot = NSDiffableDataSourceSnapshot<Section, CoinUsageEntity>()
         snapshot.appendSections([.history])
         snapshot.appendItems(items)
-        dataSource.apply(snapshot, animatingDifferences: true) { [weak self] in
-            //self?.updateEmptyState()
+        dataSource.apply(snapshot, animatingDifferences: true){ [weak self] in
+            self?.updateEmptyState()
         }
     }
-    
 }
 
+extension UsageHistoryViewController: UICollectionViewDelegate {
+    func collectionView(_ collectionView: UICollectionView,
+                        willDisplay cell: UICollectionViewCell,
+                        forItemAt indexPath: IndexPath) {
+        delegate?.loadMoreUsageIfNeeded(visibleIndex: indexPath.item)
+    }
+}

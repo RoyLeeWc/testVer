@@ -21,6 +21,8 @@ final class TabBarViewController: UITabBarController {
     
     private var subscriptions = Set<AnyCancellable>()
     
+    private var homeCoordinator: HomeCoordinator?
+    
     private enum TabType: Int, CaseIterable {
         case home = 0, recommended, playlist, profile
 
@@ -272,20 +274,42 @@ final class TabBarViewController: UITabBarController {
     }
     
     private func makeHomeVC() -> UINavigationController {
-        guard let homeVC = AppContext.container.resolve(HomeViewController.self) else { return UINavigationController() }
+        // 1) VC DI
+        guard let homeVC = AppContext.container.resolve(HomeViewController.self) else {
+            return UINavigationController()
+        }
+        
+        // 2) 네비 컨테이너
         let nvc = UINavigationController(rootViewController: homeVC)
-        nvc.tabBarItem = UITabBarItem(
-            title: "",
-            image: nil,
-            selectedImage: nil
-        )
+        nvc.tabBarItem = UITabBarItem(title: "", image: nil, selectedImage: nil)
         nvc.isNavigationBarHidden = true
+        
+        // 3) 코디네이터 DI + 바인딩
+        let interactor = AppContext.container.resolve(HomeViewerPrefetchInteractor.self)!
+        let coordinator = HomeCoordinator(navigation: nvc, interactor: interactor)
+        
+        // AppCoordinator가 강하게 보관 (VC 쪽은 weak로 권장)
+        self.homeCoordinator = coordinator
+        
+        // HomeVC에 코디네이터 연결 (내부에서 viewModel 바인딩)
+        homeVC.attachCoordinator(coordinator)
+        
         return nvc
     }
+//        guard let homeVC = AppContext.container.resolve(HomeViewController.self) else { return UINavigationController() }
+//        let nvc = UINavigationController(rootViewController: homeVC)
+//        nvc.tabBarItem = UITabBarItem(
+//            title: "",
+//            image: nil,
+//            selectedImage: nil
+//        )
+//        nvc.isNavigationBarHidden = true
+//        return nvc
+//    }
 
     private func makeRecommendVC() -> UINavigationController {
         guard let recommendVC = AppContext.container.resolve(ViewerViewController.self,
-                                                             argument: ViewerType.tastedViewer) else { return UINavigationController() }
+                                                             argument: ViewerRoute.tasted) else { return UINavigationController() }
         let nvc = UINavigationController(rootViewController: recommendVC)
         nvc.tabBarItem = UITabBarItem( title: "", image: nil, selectedImage: nil )
         nvc.isNavigationBarHidden = true
@@ -339,28 +363,29 @@ extension TabBarViewController: UITabBarControllerDelegate {
             // Home 탭이 선택된 경우
             if let nav = viewController as? UINavigationController,
                let homeVC = nav.topViewController as? HomeViewController {
-                //print("▶️ Home 탭이 선택되었습니다.")
+                print("▶️ Home 탭이 선택되었습니다.")
             }
             
         case .recommended:
             // Recommended 탭이 선택된 경우
             if let nav = viewController as? UINavigationController,
                let recVC = nav.topViewController as? ViewerViewController {
-//                print("▶️ Recommended 탭이 선택되었습니다.")
+                print("▶️ RViewerView 탭이 선택되었습니다.")
             }
             
         case .playlist:
             // Playlist 탭이 선택된 경우
             if let nav = viewController as? UINavigationController,
                let listVC = nav.topViewController as? MyListTabViewController {
-//                print("▶️ Playlist 탭이 선택되었습니다.")
+                
+                print("▶️ MyListTab 탭이 선택되었습니다.")
             }
             
         case .profile:
             // Profile 탭이 선택된 경우
             if let nav = viewController as? UINavigationController,
                let myPageVC = nav.topViewController as? MyPageViewController {
-//                print("▶️ Profile 탭(마이페이지)이 선택되었습니다.")
+                print("▶️ Profile 탭(마이페이지)이 선택되었습니다.")
                 
             }
         }

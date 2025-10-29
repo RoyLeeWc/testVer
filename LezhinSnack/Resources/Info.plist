@@ -9,9 +9,22 @@
 			<string>Editor</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.googleusercontent.apps.1053903642254-qvnm9f5osqvdfeft30l8sb5iuf60b477</string>
+				<string>com.googleusercontent.apps.1085419871679-bpmqqph15rl2vpive7av8dr8bsaoil6k</string>
+                <string>fb1902538654017947</string>
 			</array>
 		</dict>
+	</array>
+	<key>FacebookAppID</key>
+	<string>1902538654017947</string>
+	<key>FacebookClientToken</key>
+	<string>96e751b7bd2f49062c07760fb2704d0c</string>
+    
+	<key>FacebookDisplayName</key>
+	<string>LezhinSnack - Test</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>fbapi</string>
+		<string>fb-messenger-api</string>
 	</array>
 	<key>UIAppFonts</key>
 	<array>

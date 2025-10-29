@@ -27,16 +27,24 @@ final class WishCell: UICollectionViewCell {
     
     private var progressHeightConstraint: Constraint?
     
-    override var isSelected: Bool {
-        didSet {
-            if isSelected {
-                contentView.alpha = 1.0
-                checkBox.setState(.checked)
-            } else {
-                contentView.alpha = 0.3
-                checkBox.setState(.unchecked)
-            }
+    private func syncSelectionUI() {
+        if isEditingMode {
+            checkBox.setState(isSelected ? .checked : .unchecked)
+            thumbnailImageView.alpha = isSelected ? 1.0 : 0.3
+        } else {
+            checkBox.setState(.unchecked)
+            thumbnailImageView.alpha = 1.0      // 일반 모드: 항상 진하게
         }
+    }
+    
+    override var isSelected: Bool {
+        didSet { syncSelectionUI() }
+    }
+    
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        isSelected = false
+        syncSelectionUI()
     }
     
     private let thumbnailImageView: UIImageView = {
@@ -72,7 +80,7 @@ final class WishCell: UICollectionViewCell {
         progressHeightConstraint?.update(offset: height)
 
         // 셀 dimming
-        contentView.alpha = isEditingMode
+        thumbnailImageView.alpha = isEditingMode
             ? (isSelected ? 1.0 : 0.3)
             : 1.0
 
@@ -107,8 +115,8 @@ final class WishCell: UICollectionViewCell {
         
     }
     
-    func configure(with entity: WishListEntity) {
-        thumbnailImageView.image = UIImage(named: entity.thumbnailIUrl)
+    func configure(with entity: WishContentItemEntity) {
+        thumbnailImageView.kf.setImage(with: URL(string: entity.thumbnailUrl))
         titleLabel.text = entity.title
     }
     

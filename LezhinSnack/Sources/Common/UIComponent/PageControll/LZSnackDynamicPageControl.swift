@@ -17,15 +17,28 @@ final class LZSnackDynamicPageControl: UIView {
     
     var selectedPage: Int = 0 {
         didSet {
+            // 1) 클램프
+            let clamped = max(0, min(selectedPage, pages - 1))
+            if clamped != selectedPage {
+                selectedPage = clamped
+                return
+            }
             guard selectedPage != oldValue else { return }
-            selectedPage = max(0, min(selectedPage, pages - 1))
+            // 2) 색상 즉시 반영
             updateColors()
             
+            // 3) pageOffset 변화 여부 체크
+            let oldOffset = pageOffset
+            // 4) 오프셋/센터 보정 (네 코드 그대로)
             let minimumThreshold = min(2, centerDots)
             if (minimumThreshold..<centerDots).contains(selectedPage - pageOffset) {
                 centerOffset = selectedPage - pageOffset
             } else {
-                pageOffset = selectedPage - centerOffset
+                pageOffset = selectedPage - centerOffset  // ← 변하면 didSet에서 updatePositions() 호출됨
+            }
+            // 5) ★ 핵심: pageOffset이 안 바뀌었다면 여기서 위치/크기 재계산 실행
+            if pageOffset == oldOffset {
+                UIView.performWithoutAnimation { self.updatePositions() }
             }
         }
     }
@@ -52,7 +65,7 @@ final class LZSnackDynamicPageControl: UIView {
         }
     }
     
-    var maxDots = 7 {
+    var maxDots = 6 {
         didSet {
             maxDots = max(0, maxDots)
             invalidateIntrinsicContentSize()
@@ -157,51 +170,79 @@ final class LZSnackDynamicPageControl: UIView {
     }
     
     func updatePositions() {
-        let maxDots = min(self.maxDots, pages)
-        let sidePages = (maxDots - centerDots) / 2
+        guard pages > 0 else { return }
         
-        let adjustedPageOffset = pageOffset + 1
+        let visibleMax   = min(maxDots, pages)        // 한 번에 보일 점 수(최대 6)
+        let dynamicMode  = pages >= visibleMax        // ≥6면 동적 모드
+        let exactlyMax   = (pages == visibleMax)      // 정확히 6개
         
-        var horizontalOffset: CGFloat
-        var bigDotsRange = pageOffset...(centerDots + pageOffset)
+        // 현재 보이는 창(window)
+        let windowStart = min(max(0, pageOffset), max(0, pages - visibleMax))
+        let windowEnd   = min(pages - 1, windowStart + visibleMax - 1)
         
-        // Scrollable한 경우
-        if self.maxDots < self.pages {
-            horizontalOffset = CGFloat(-adjustedPageOffset + sidePages) * (dotSize + spacing) + (bounds.width - intrinsicContentSize.width) / 2
-            
-            if 0 == pageOffset {
-                bigDotsRange = (bigDotsRange.lowerBound)...(bigDotsRange.upperBound - 1)
-            }
-            
-            if 0 < pageOffset {
-                bigDotsRange = (bigDotsRange.lowerBound + 1)...(bigDotsRange.upperBound)
-            }
-            
-            if pageOffset == (pages - maxDots) {
-                bigDotsRange = (bigDotsRange.lowerBound + 1)...(bigDotsRange.upperBound + 1)
+        // 가운데 정렬
+        let visibleCount = windowEnd - windowStart + 1
+        let visibleWidth = CGFloat(visibleCount) * dotSize + CGFloat(visibleCount - 1) * spacing
+        let offsetX = (bounds.width - visibleWidth) / 2
+        
+        let smallScale: CGFloat = 0.75
+        
+        
+        let leftSmall: Bool
+        let rightSmall: Bool
+        if !dynamicMode {
+            leftSmall = false
+            rightSmall = false
+        } else if exactlyMax {
+            let i = max(0, min(pages - 1, selectedPage))
+            switch i {
+            case 0...2:
+                leftSmall  = false
+                rightSmall = true
+            case 3...4:
+                leftSmall  = true
+                rightSmall = true
+            default: // i >= Last
+                leftSmall  = true
+                rightSmall = false
             }
         } else {
-            horizontalOffset = (bounds.width - intrinsicContentSize.width) / 2
+            leftSmall  = (windowStart > 0)
+            rightSmall = (windowEnd   < pages - 1)
         }
         
-        dotViews.enumerated().forEach { page, dot in
-            let center = CGPoint(x: horizontalOffset + bounds.minX + dotSize / 2 + (dotSize + spacing) * CGFloat(page), y: bounds.midY)
-            let scale: CGFloat = {
-                if !(pageOffset..<maxDots + pageOffset).contains(page) {
-                    return 0
-                }
-                
-                if bigDotsRange.contains(page) {
-                    return 1
-                }
-                
-                return 0.75
-            }()
+        // === 점 배치/스케일 ===
+        for (page, dot) in dotViews.enumerated() {
+            let inWindow = (windowStart...windowEnd).contains(page)
+            let idxInWindow = CGFloat(page - windowStart)
+            let center = CGPoint(
+                x: offsetX + dotSize / 2 + (dotSize + spacing) * idxInWindow,
+                y: bounds.midY
+            )
             
-            dot.frame = CGRect(origin: .zero, size: CGSize(width: dotSize * scale, height: dotSize * scale))
+            // 선택된 점은 항상 크게 (우선순위 최상)
+            let isActive = (page == selectedPage)
+            
+            let scale: CGFloat
+            if !inWindow {
+                scale = 0
+            } else if isActive {
+                scale = 1.0
+            } else if (page == windowStart && leftSmall) || (page == windowEnd && rightSmall) {
+                scale = smallScale
+            } else {
+                scale = 1.0
+            }
+            
+            dot.frame = CGRect(origin: .zero,
+                               size: CGSize(width: dotSize * scale, height: dotSize * scale))
             dot.center = center
         }
+        
+        updateColors() // 색상은 selectedPage 기준 유지
     }
+    
+
     
     override var intrinsicContentSize: CGSize {
         let pages = min(maxDots, self.pages)

@@ -19,6 +19,7 @@ import AVFAudio
 import SkeletonView
 import Toast
 import EasyTipView
+import FacebookCore
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -37,7 +38,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
            let pushInfo = remoteNotification["aps"] as? [String: AnyObject] {
             Defaults.pendingPushDict = AppContext.shared.makePushDict(info: pushInfo)
         }
+        FBSDKCoreKit.ApplicationDelegate.shared.application( application, didFinishLaunchingWithOptions: launchOptions)
         
+
+
+//        FBSDKCoreKit.Settings.shared.appID = "1902538654017947"
         setupAppLaunch()
         
         return true
@@ -262,7 +267,7 @@ func printAppInfo() {
         
         ---------------------- 2. 마지막 로그인 정보 ------------------------
         
-        SNS ID   : \(Defaults.snsId)
+        SNS ID   : \(Defaults.userId)
         E-MAIL   : \(Defaults.userEmail)
         NAME     : \(Defaults.userName)
         

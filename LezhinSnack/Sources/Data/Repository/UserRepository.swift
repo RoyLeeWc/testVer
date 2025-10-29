@@ -8,35 +8,79 @@
 import Foundation
 
 protocol UserRepositoryProtocol {
-    func fetchUserCoinBalance() async throws -> UserCoinEntity
-    func updateUserNickname(to newNickname: String) async throws
+    func fetchUserInfo() async throws -> UserInfoEntity
+    func updateNickname(_ nickname: String) async throws -> UpdateNicknameEntity
+    func fetchWithdrawalReasons() async throws -> [WithdrawalReasonEntity]
+    func withdraw(categoryId: Int, reason: String) async throws -> UserWithdrawalResultEntity
+    func fetchUserCoin() async throws -> UserCoinEntity
 }
+
+enum UserRepositoryError: Error {
+    case api(code: String, message: String)
+    case invalidData
+}
+
 
 class UserRepository: UserRepositoryProtocol {
 
-     
-    func fetchUserCoinBalance() async throws -> UserCoinEntity {
-        let userCoinAPIRequest = UserCoinAPIRequest(parameters: nil)
-        let userCoinResponse: KRUserCoinDTO = try await NetworkService.shared.requestAsync(userCoinAPIRequest)
-        
-        guard userCoinResponse.result == LZSConstant.ResponseSuccess,
-              let data = userCoinResponse.data else {
-            throw NSError(
-                domain: "UserCoinError",
-                code: -1,
-                userInfo: nil
-            )
+    func fetchUserInfo() async throws -> UserInfoEntity {
+        let req = UserInfoAPIRequest()
+        let dto: UserInfoDTO = try await NetworkService.shared.requestAsync(req)
+        guard dto.responseCode == "SUCCESS" else {
+            let code = dto.errorData?.code ?? "UNKNOWN"
+            let msg  = dto.errorData?.defaultMessage ?? "Fetch user info failed."
+            throw UserRepositoryError.api(code: code, message: msg)
         }
-        
-        return UserCoinEntity(coin: data.coin ?? 0,
-                              bonusCoin: data.bonusCoin ?? 0,
-                              expiringCoin: 0,
-                              expiringWindowDays: 0)
+        guard let entity = UserInfoEntity(dto: dto.data) else { throw UserRepositoryError.invalidData }
+        return entity
     }
     
-    
-    func updateUserNickname(to newNickname: String) async throws {
-        
+    func updateNickname(_ nickname: String) async throws -> UpdateNicknameEntity {
+        let req = UpdateNicknameAPIRequest(nickname: nickname)
+        let dto: UpdateNicknameDTO = try await NetworkService.shared.requestAsync(req)
+        guard dto.responseCode == "SUCCESS" else {
+            let code = dto.errorData?.code ?? "UNKNOWN"
+            let msg  = dto.errorData?.defaultMessage ?? "Update nickname failed."
+            throw UserRepositoryError.api(code: code, message: msg)
+        }
+        guard let entity = UpdateNicknameEntity(dto: dto.data) else { throw UserRepositoryError.invalidData }
+        return entity
     }
+    
+    func fetchWithdrawalReasons() async throws -> [WithdrawalReasonEntity] {
+        let req = WithdrawalReasonsAPIRequest()
+        let dto: WithdrawalReasonsDTO = try await NetworkService.shared.requestAsync(req)
+        guard dto.responseCode == "SUCCESS" else {
+            let code = dto.errorData?.code ?? "UNKNOWN"
+            let msg  = dto.errorData?.defaultMessage ?? "Fetch withdrawal reasons failed."
+            throw UserRepositoryError.api(code: code, message: msg)
+        }
+        let list = (dto.data ?? []).map(WithdrawalReasonEntity.init(dto:))
+        return list
+    }
+    
+    func withdraw(categoryId: Int, reason: String) async throws -> UserWithdrawalResultEntity {
+        let req = UserWithdrawalAPIRequest(withdrawalCategoryId: categoryId, reason: reason)
+        let dto: UserWithdrawalDTO = try await NetworkService.shared.requestAsync(req)
+        guard dto.responseCode == "SUCCESS" else {
+            let code = dto.errorData?.code ?? "UNKNOWN"
+            let msg  = dto.errorData?.defaultMessage ?? "Fetch withdrawal reasons failed."
+            throw UserRepositoryError.api(code: code, message: msg)
+        }
+        guard let entity = UserWithdrawalResultEntity(dto: dto.data) else { throw UserRepositoryError.invalidData }
+        return entity
+    }
+    
+    func fetchUserCoin() async throws -> UserCoinEntity {
+            let req = UserCoinAPIRequest()
+            let dto: UserCoinDTO = try await NetworkService.shared.requestAsync(req)
+
+            guard dto.responseCode == "SUCCESS", let data = dto.data else {
+                let msg = dto.errorData?.defaultMessage ?? "Fetch withdrawal reasons failed."
+                throw UserRepositoryError.api(code: dto.errorData?.code ?? "ERROR", message: msg)
+            }
+            return data.toEntity()
+        }
+
     
 }

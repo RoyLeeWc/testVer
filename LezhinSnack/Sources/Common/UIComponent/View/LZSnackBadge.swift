@@ -108,3 +108,16 @@ final class LZSnackBadgeStackView: UIStackView {
         fatalError("스토리보드 지원하지 않음")
     }
 }
+
+extension LZSnackBadgeType {
+    init?(mark: MarkEntity) { self.init(markType: mark.type) }
+
+    init?(markType: MarkType) {
+        switch markType {
+        case .new:   self = .new
+        case .up:    self = .up
+        case .top10: self = .top10
+        case .unknown: return nil
+        }
+    }
+}

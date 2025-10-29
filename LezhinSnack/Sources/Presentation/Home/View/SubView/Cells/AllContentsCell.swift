@@ -28,6 +28,15 @@ final class AllContentsCell: UICollectionViewCell {
         fatalError("init(coder:)는 지원하지 않습니다. 코드 기반으로 구현해 주세요.")
     }
     
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        reset()
+    }
+    
+    func reset() {
+        // 이전 상태 정리
+        thumbnailImageView.image = nil
+    }
     
     private func setupUI() {
         
@@ -41,9 +50,26 @@ final class AllContentsCell: UICollectionViewCell {
         
     }
     
+    func configure(ongoing: ContentsOngoingItemEntity) {
+        let titleImagUrl = URL(string: ongoing.coverImagePath ?? "")
+        thumbnailImageView.kf.setImage(with: titleImagUrl)
+        showAnimatedGradientSkeleton(isPlaceholder: false)
+    }
+
+    func configure(curation: ContentsCurationItemEntity) {
+        let titleImagUrl = URL(string: curation.contentsDetail?.coverImagePath ?? "")
+        thumbnailImageView.kf.setImage(with: titleImagUrl)
+        showAnimatedGradientSkeleton(isPlaceholder: false)
+    }
+    
+    func configure(ranking: ContentsRankingItemEntity) {
+        let titleImagUrl = URL(string: ranking.contentsDetail?.coverImagePath ?? "")
+        thumbnailImageView.kf.setImage(with: titleImagUrl)
+        showAnimatedGradientSkeleton(isPlaceholder: false)
+    }
+    
  
     func configure(_ data: HomeSectionEntity) {
-        
         showAnimatedGradientSkeleton(isPlaceholder: data.isPlaceholder)
     }
     

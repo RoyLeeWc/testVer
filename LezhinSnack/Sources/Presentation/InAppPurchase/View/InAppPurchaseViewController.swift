@@ -12,8 +12,8 @@ import Combine
 import SwiftyUserDefaults
 
 enum PurchaseItem: Hashable {
-    case coin(CoinProductEntity)
-    case membership(MembershipProductEntity)
+    case coin(entity: ProductItemEntity, isFirst: Bool)
+    case membership(ProductItemEntity)
     case footer(ShopFooterEntity)
 }
 
@@ -41,7 +41,7 @@ final class InAppPurchaseViewController: UIViewController, ChildNavigationBarPre
     private var activeSections: [PurchaseSection] {
         var secs: [PurchaseSection] = [.coin]
         // 멤버십 데이터가 존재할 때만 섹션 추가
-        if currentMemberships != nil {
+        if currentMembershipsItem != nil {
             secs.append(.membership)
         }
         // Footer는 항상 보이도록
@@ -55,8 +55,13 @@ final class InAppPurchaseViewController: UIViewController, ChildNavigationBarPre
     private var subscriptions = Set<AnyCancellable>()
     
     
-    private var currentCoins: [CoinProductEntity] = []
-    private var currentMemberships: [MembershipProductEntity]? = nil
+//    private var currentCoins: [CoinProductEntity] = []
+//    private var currentMemberships: [MembershipProductEntity]? = nil
+    
+    private var currentCoinsItem: [ProductItemEntity] = []
+    private var currentMembershipsItem: [ProductItemEntity]? = nil
+    
+    private var firstPurchaseCoinIds: Set<Int> = []
     
     let viewModel: InAppPurchaseViewModel
     var currentCoinBalance: String = "0"
@@ -92,20 +97,29 @@ final class InAppPurchaseViewController: UIViewController, ChildNavigationBarPre
     }
     
     private func bind() {
-        viewModel.$coinProductList
+        
+        viewModel.$firstPurchaseCoinIds
             .receive(on: RunLoop.main)
-            .sink { [weak self] coinProductList in
-                // nil일 땐 빈 배열로
-                self?.currentCoins = coinProductList ?? []
+            .sink { [weak self] ids in
+                self?.firstPurchaseCoinIds = ids
                 self?.applySnapshot()
             }
             .store(in: &subscriptions)
         
-        viewModel.$memberShipProductList
+        viewModel.$coinItems
             .receive(on: RunLoop.main)
-            .sink { [weak self] memberShipProductList in
+            .sink { [weak self] coinItems in
                 // nil일 땐 빈 배열로
-                self?.currentMemberships = memberShipProductList    // nil 허용
+                self?.currentCoinsItem = coinItems ?? []
+                self?.applySnapshot()
+            }
+            .store(in: &subscriptions)
+        
+        viewModel.$subscriptionItems
+            .receive(on: RunLoop.main)
+            .sink { [weak self] subscriptionItems in
+                // nil일 땐 빈 배열로
+                self?.currentMembershipsItem = subscriptionItems    // nil 허용
                 self?.applySnapshot()
             }
             .store(in: &subscriptions)
@@ -149,8 +163,7 @@ final class InAppPurchaseViewController: UIViewController, ChildNavigationBarPre
     }
     
     private func fetchData() {
-        viewModel.fetchCoinProduct()
-        viewModel.fetchMembershipProduct()
+        viewModel.loadCatalog()
     }
     
     private func setupCollectionView() {
@@ -279,9 +292,10 @@ final class InAppPurchaseViewController: UIViewController, ChildNavigationBarPre
     private func configureDataSource() {
         dataSource = UICollectionViewDiffableDataSource<PurchaseSection, PurchaseItem>(collectionView: collectionView) { [weak self] collectionView, indexPath, item in
             switch item {
-            case .coin(let coin):
+            case .coin(let coin, let isFirst):
                 guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: CoinProductCell.reuseIdentifier, for: indexPath) as? CoinProductCell else { return UICollectionViewCell()}
-                cell.configure(with: coin)
+                let isFirst = self?.firstPurchaseCoinIds.contains(coin.productId)
+                cell.configure(with: coin, isFirstPurchase: isFirst ?? false)
                 return cell
             case .membership(let member):
                 guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: MembershipProductCell.reuseIdentifier, for: indexPath) as? MembershipProductCell else { return UICollectionViewCell()}
@@ -332,10 +346,10 @@ final class InAppPurchaseViewController: UIViewController, ChildNavigationBarPre
         snapshot.appendSections(sections)
 
         // 3) 코인 섹션에 들어갈 아이템 생성
-        if !currentCoins.isEmpty {
+        if !currentCoinsItem.isEmpty {
             // currentCoins 배열을 PurchaseItem으로 매핑
-            let coinItems: [PurchaseItem] = currentCoins.map { coinModel in
-                .coin(coinModel)
+            let coinItems: [PurchaseItem] = currentCoinsItem.map { coinModel in
+                    .coin(entity: coinModel, isFirst: firstPurchaseCoinIds.contains(coinModel.productId))
             }
             snapshot.appendItems(coinItems, toSection: .coin)
         } else {
@@ -345,7 +359,7 @@ final class InAppPurchaseViewController: UIViewController, ChildNavigationBarPre
         }
 
         // 4) 멤버십 섹션에 들어갈 아이템 생성
-        if let memberships = currentMemberships, !memberships.isEmpty {
+        if let memberships = currentMembershipsItem, !memberships.isEmpty {
             // currentMemberships는 옵셔널로 허용했으므로, nil 체크
             let membershipItems: [PurchaseItem] = memberships.map { membershipModel in
                 .membership(membershipModel)
@@ -376,35 +390,59 @@ extension InAppPurchaseViewController: UICollectionViewDelegate {
         
         let sectionType = sections[indexPath.section]
         
+        let menu: PaymentMenuType = {
+            switch sectionType {
+            case .coin:        return .coinProduct
+            case .membership:  return .subscriptionProduct
+            case .footer:      return .unknown
+            }
+        }()
+        // 선택된 item 꺼내기
+        guard let item = dataSource.itemIdentifier(for: indexPath) else { return }
+        // item에서 ProductItemEntity/ productId 추출
+        let entity: ProductItemEntity
+        switch item {
+        case .coin(let e, _):         entity = e
+        case .membership(let e):      entity = e
+        case .footer:                 return
+        }
+        
         switch sectionType {
         case .coin:
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let providerId = try await viewModel.ensureCoinProviderId()
+                    
+                    let mockPaymentInfo = PurchaseUserContext(
+                        paymentMenuType: menu.rawValue, paymentProviderId: String(providerId), productId:entity.productId
+                    )
+                    try? viewModel.purchaseConsumable(paymentInfo: mockPaymentInfo)
+                    
+                    printX("✅ SUBSCRIPTION_PRODUCT ProviderID = \(providerId)")
+                    
+                } catch {
+                    printX("❌ 결제수단 조회 실패(SUBS): \(error)")
+                }
+            }
             print("코인상품 선택")
-            
-            let mockPaymentInfo = PaymentInfoDTO(
-                paymentId: "45",
-                coinProductId: "265",
-                episodeId: "0",
-                purchaseType: nil,
-                paymentMenu: "COIN_PRODUCT",
-                redirectUrl: "https://dev.bomtoon.com/callback/payment",
-                serviceId: "BOOMTOON_COM",
-                accessToken: Defaults.accessToken,
-                platform: "IOS_APP"
-            )
-            
-            try? viewModel.purchaseConsumable(paymentInfo: mockPaymentInfo)
             
         case .membership:
             
-            let entity = InAppPurchaseEntity(inAppPurchaseType: InAppPurchaseType.allCases.randomElement()!,
-                                             amount: 4400,
-                                             purchaseDate: LZSUtil.getCurrentTimeDate(),
-                                             purchaseCoin: 300,
-                                             purchasePeriod: LZSUtil.getCurrentTimeDate().toStringWithGMT(regionCode: LanguageCode.korean),
-                                             paymentMethod: "충전소_결제수단_애플인앱".localized)
-            
-            guard let vc = AppContext.container.resolve(PurchaseSuccessViewController.self, argument: entity) else { return }
-            self.navigationController?.pushHidesBottomBarViewController(vc)
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let providerId = try await viewModel.ensureSubscriptionProviderId()
+                    let mockPaymentInfo = PurchaseUserContext(
+                        paymentMenuType: menu.rawValue, paymentProviderId: String(providerId), productId:entity.productId
+                    )
+                    try? viewModel.purchaseConsumable(paymentInfo: mockPaymentInfo)
+                    
+                    printX("✅ SUBSCRIPTION_PRODUCT ProviderID = \(providerId)")
+                } catch {
+                    printX("❌ 결제수단 조회 실패(SUBS): \(error)")
+                }
+            }
         case .footer:
             break
         }

@@ -23,9 +23,9 @@ final class InAppPurchaseService {
     var isPurchasing = false
     
     enum PurchaseApiEndpoint {
-        /// 결제요청 API
+        /// 앱 결제 예약 API
         case paymentReady
-        /// 코인충전 API
+        /// IOS 충전 요청 API
         case chargeStoreKit2
         /// 충전 실패 로그깅용 API
         case purchaseFailLog
@@ -36,13 +36,16 @@ final class InAppPurchaseService {
         var path: String {
             switch self {
             case .paymentReady:
-                return "/v1/app/payment"
+//                return "/v1/app/payment"
+                return "/app/payments"
             case .chargeStoreKit2:
-                return "/v2/app/ios/transaction"
+//                return "/v2/app/ios/transaction"
+                return "/app/ios/transaction"
             case .purchaseFailLog:
                 return "/v1/app/ios/transaction/fail-log"
             case .paymentInquiry(let tradeId):
-                return "/v1/app/\(tradeId)/inquiry"
+                return "app/payments/\(tradeId)"
+//                return "/v1/app/\(tradeId)/inquiry"
             }
         }
         
@@ -81,7 +84,27 @@ final class InAppPurchaseService {
         return param
     }
     
-    func purchaseNewConsumableProduct(paymentInfo: PaymentInfoDTO) async throws -> InAppPurchaseEntity {
+
+    func testParam() -> [String: Any] {
+        
+        let accessToken = Defaults.accessToken
+        //let countryCode = Defaults.
+        let ipAddress = AppContext.shared.deviceIPAddress
+        
+//        let languageType = AppContext.shared.deviceUniqueID
+        var param: [String: Any] = [
+            "accessToken": accessToken,
+            "countryCode": "KR",
+            "ipAddress": ipAddress,
+            "languageType": "ko-KR",
+            "platform": "IOS"
+        ]
+        
+        return param
+    }
+    
+    
+    func purchaseNewConsumableProduct(paymentInfo: PurchaseUserContext) async throws -> InAppPurchaseEntity {
         
         if await isUnfinishedTransaction() {
             if isPurchasing {
@@ -97,13 +120,11 @@ final class InAppPurchaseService {
         defer { self.isPurchasing = false }
         
         let tradeHistoryService = TradeHistoryService()
-        let paymentReserveDTO = try await requestPurchaseReserve(data: paymentInfo)
+        let appPaymentReserveDTO = try await requestPurchaseReserve(data: paymentInfo)
         
-        guard paymentReserveDTO.result == LZSConstant.ResponseSuccess,
-              let reserveResultDTO = paymentReserveDTO.data,
-              let userEmail = reserveResultDTO.userEmail,
-              let productID = reserveResultDTO.productCode,
-              let tradeId = reserveResultDTO.tradeId else {
+        guard appPaymentReserveDTO.responseCode == LZSConstant.ResponseSuccess,
+              let productID = appPaymentReserveDTO.data?.productCode,
+              let tradeId = appPaymentReserveDTO.data?.tradeId else {
             throw PurchaseError.invalidPayment
         }
          
@@ -123,7 +144,7 @@ final class InAppPurchaseService {
             
             let paymentResultVO = try await requestPurchaseFinishV2(tradeId: tradeId, transactionId: transactionId,environment: transactionEnvironment)
             
-            if paymentResultVO.result == LZSConstant.ResponseSuccess {
+            if paymentResultVO.responseCode == LZSConstant.ResponseSuccess {
                 
                 await transaction.finish() //애플-결제성공, transaction API까지 호출 성공이므로 트랜잭션 종료처리
                 await tradeHistoryService.removeMapping(productID: productID, tradeID: tradeId)
@@ -131,33 +152,34 @@ final class InAppPurchaseService {
                 Analytics.logTransaction(transaction)
                 
                 if let paymentResultData = paymentResultVO.data {
+                    
+                    let totalCoins = paymentResultData.chargeCoins.totalCoinAmount
+                    // 금액 Double → Int (KRW라면 그냥 Int로 캐스팅, 소수 방지는 반올림)
+                    let amountInt = Int(paymentResultData.amount.rounded())
+                    
                     return InAppPurchaseEntity(inAppPurchaseType: .consumableCoin,
-                                               amount: Int(paymentResultData.amount ?? 0),
+                                               amount: amountInt,
                                                purchaseDate: transaction.purchaseDate,
-                                               purchaseCoin: sumUpCoins([
-                                                paymentResultData.chargeBonusCoin,
-                                                paymentResultData.chargeCoin,
-                                                paymentResultData.chargeFreeCoin
-                                               ]),
+                                               purchaseCoin: totalCoins,
                                                purchasePeriod: nil,
                                                paymentMethod: "충전소_결제수단_애플인앱".localized)
                 }
                 
             } else {
                 printX("🚫 requestPurchaseFinish 요청 리스폰스 오류\n메시지: paymentResultVO is not Success ")
-                
+                 
                 let error = NSError(domain: "PurchaseStoreKit2", code: 0, userInfo: [
                     NSLocalizedDescriptionKey: "Payment result is not success."
                 ])
-                
-                InAppPurchaseService.shared.requestPurchaseLog(userId: userEmail, tradeId: tradeId, receipt: error.localizedDescription)
+                await transaction.finish()
+//                InAppPurchaseService.shared.requestPurchaseLog(userId: "", tradeId: tradeId, receipt: error.localizedDescription)
                 
                 throw PurchaseError.networkResponseError(error)
                 
             }
             // 구매를 성공했으나, verified 실패
         case let .success(.unverified(transaction, error)):
-            InAppPurchaseService.shared.requestPurchaseLog(userId: userEmail, tradeId: tradeId, receipt: error.localizedDescription + String(transaction.id))
+//            InAppPurchaseService.shared.requestPurchaseLog(userId: "userEmail", tradeId: tradeId, receipt: error.localizedDescription + String(transaction.id))
             throw PurchaseError.transactionVerificationFailed
             
         case .pending:
@@ -224,9 +246,11 @@ final class InAppPurchaseService {
         
         let transactionId = String(transaction.id)
         let tradeHistoryService = TradeHistoryService()
+        await transaction.finish()
         
         let inquiryVO = try await self.requestPurchaseCheck(tradeId: tradeId)
         if inquiryVO.isSuccess() {
+//        if inquiryVO.responseCode == LZSConstant.ResponseSuccess {
             if inquiryVO.data?.status == COMPLETE {
                 if let inquiryTransactionId = inquiryVO.data?.transactionId,
                    inquiryTransactionId == transactionId {
@@ -253,7 +277,7 @@ final class InAppPurchaseService {
                     transactionId: transactionId,
                     environment: transactionEnvironment
                 )
-                if paymentDTO.isSuccess() {
+                if paymentDTO.responseCode == LZSConstant.ResponseSuccess {
                     await transaction.finish()
                     
                     // 매핑 삭제 및 데이터 정리
@@ -264,14 +288,15 @@ final class InAppPurchaseService {
                     
                     Analytics.logTransaction(transaction)
                     
+                    
+                    let totalCoins = paymentDTO.data?.chargeCoins.totalCoinAmount
+                    // 금액 Double → Int (KRW라면 그냥 Int로 캐스팅, 소수 방지는 반올림)
+                    let amountInt = Int(paymentDTO.data?.amount.rounded() ?? 0)
+                    
                     return InAppPurchaseEntity(inAppPurchaseType: .consumableCoin,
-                                               amount: Int(paymentDTO.data?.amount ?? 0),
+                                               amount: amountInt,
                                                purchaseDate: transaction.purchaseDate,
-                                               purchaseCoin: sumUpCoins([
-                                                paymentDTO.data?.chargeBonusCoin,
-                                                paymentDTO.data?.chargeCoin,
-                                                paymentDTO.data?.chargeFreeCoin
-                                               ]),
+                                               purchaseCoin: totalCoins,
                                                purchasePeriod: nil,
                                                paymentMethod: "충전소_결제수단_애플인앱".localized)
                     
@@ -347,6 +372,7 @@ final class InAppPurchaseService {
         
         let inquiryVO = try await requestPurchaseCheck(tradeId: tradeId)
         if inquiryVO.isSuccess() {
+//        if inquiryVO.responseCode == LZSConstant.ResponseSuccess {
             if inquiryVO.data?.status == COMPLETE {
                 if let inquiryTransactionId = inquiryVO.data?.transactionId,
                    inquiryTransactionId == transactionId {
@@ -356,15 +382,19 @@ final class InAppPurchaseService {
                 return nil
             } else {
                 let paymentDTO = try await requestPurchaseFinishV2(tradeId: tradeId, transactionId: transactionId,environment: transactionEnvironment)
-                if (paymentDTO.isSuccess()) {
+                if (paymentDTO.responseCode == LZSConstant.ResponseSuccess) {
                     await transaction.finish() //애플-결제성공, transaction API까지 호출 성공이므로 트랜잭션 종료처리
                     await tradeHistoryService.removeMapping(productID: transactionId, tradeID: tradeId)
                     Analytics.logTransaction(transaction)
                     
+                    let totalCoins = paymentDTO.data?.chargeCoins.totalCoinAmount
+                    // 금액 Double → Int (KRW라면 그냥 Int로 캐스팅, 소수 방지는 반올림)
+                    let amountInt = Int(paymentDTO.data?.amount.rounded() ?? 0)
+                    
                     return InAppPurchaseEntity(inAppPurchaseType: .consumableCoin,
-                                               amount: Int(paymentDTO.data?.amount ?? 0),
+                                               amount: amountInt,
                                                purchaseDate: transaction.purchaseDate,
-                                               purchaseCoin: nil,
+                                               purchaseCoin: totalCoins,
                                                purchasePeriod: nil,
                                                paymentMethod: "충전소_결제수단_애플인앱".localized)
                     
@@ -467,9 +497,28 @@ extension InAppPurchaseService {
      3.requestPurchaseCheck : 충전확인 API
      */
     
-    public func requestPurchaseReserve(data: PaymentInfoDTO) async throws -> PaymentReserveDTO {
-        let header: HTTPHeaders = commonHeaders()
-        var param = commonParam()
+    public func requestPurchaseReserve(data: PurchaseUserContext) async throws -> AppPaymentReserveDTO {
+        
+        let header: HTTPHeaders = AppContext.shared.makeSnackAuthHeaders(includeUserId: true, includeBearer: true)
+        
+        let accessToken = Defaults.accessToken
+        //let countryCode = Defaults.
+        let ipAddress = AppContext.shared.deviceIPAddress
+        
+//        printX("\(Defaults.currentSetLanguageCode), \(Defaults.currentSetLanguageCode)")
+        
+//        let languageType = AppContext.shared.deviceUniqueID
+        
+        var param: [String: Any] = [
+            "accessToken": accessToken,
+            "countryCode": "KR",
+            "ipAddress": ipAddress,
+            "languageType": "ko-KR",
+            "platform": "IOS",
+            "paymentMenuType": data.paymentMenuType,
+            "paymentProviderId": data.paymentProviderId,
+            "productId": data.productId
+        ]
         
         // 요청 중인지 확인하고, 요청 중이면 에러를 반환
         let shouldProceed = await requestPurchaseReadyStateManager.shouldProceed()
@@ -483,16 +532,6 @@ extension InAppPurchaseService {
             Task { await requestPurchaseReadyStateManager.finishedRequest() }
         }
         
-        param["paymentId"] = data.paymentId
-        param["coinProductId"] = data.coinProductId
-        param["episodeId"] = data.episodeId
-        param["paymentMenu"] = data.paymentMenu
-        param["redirectUrl"] = data.redirectUrl
-        param["serviceId"] = data.serviceId
-        param["accessToken"] = data.accessToken
-        param["platform"] = data.platform
-        param["ipAddress"] = AppContext.shared.deviceIPAddress
-        
         let response = await AF.request(
             PurchaseApiEndpoint.paymentReady.url,
             method: .post,
@@ -500,9 +539,9 @@ extension InAppPurchaseService {
             encoding: JSONEncoding.default,
             headers: header
         )
-        .validate()
-        .serializingDecodable(PaymentReserveDTO.self)
-        .response
+            .validate()
+            .serializingDecodable(AppPaymentReserveDTO.self)
+            .response
         
         switch response.result {
         case .success(let decodeData):
@@ -513,9 +552,55 @@ extension InAppPurchaseService {
             throw error
         }
     }
+    
+//    public func requestPurchaseReserve(data: PaymentInfoDTO) async throws -> PaymentReserveDTO {
+//        let header: HTTPHeaders = commonHeaders()
+//        var param = commonParam()
+//        
+//        // 요청 중인지 확인하고, 요청 중이면 에러를 반환
+//        let shouldProceed = await requestPurchaseReadyStateManager.shouldProceed()
+//        guard shouldProceed else {
+//            print("⚠️ 이미 requestPurchaseReady를 요청중입니다 ")
+//            throw PurchaseError.alreadyRequestCoinCharge
+//        }
+//        
+//        // 트랜잭션 함수 종료시에 다시 결제 요청 할수있게 플래그해제
+//        defer {
+//            Task { await requestPurchaseReadyStateManager.finishedRequest() }
+//        }
+//        
+//        param["paymentId"] = data.paymentId
+//        param["coinProductId"] = data.coinProductId
+//        param["episodeId"] = data.episodeId
+//        param["paymentMenu"] = data.paymentMenu
+//        param["redirectUrl"] = data.redirectUrl
+//        param["serviceId"] = data.serviceId
+//        param["accessToken"] = data.accessToken
+//        param["platform"] = data.platform
+//        param["ipAddress"] = AppContext.shared.deviceIPAddress
+//        
+//        let response = await AF.request(
+//            PurchaseApiEndpoint.paymentReady.url,
+//            method: .post,
+//            parameters: param,
+//            encoding: JSONEncoding.default,
+//            headers: header
+//        )
+//        .validate()
+//        .serializingDecodable(PaymentReserveDTO.self)
+//        .response
+//        
+//        switch response.result {
+//        case .success(let decodeData):
+//            printX("✅ requestPurchaseReserve 요청 성공")
+//            return decodeData
+//        case .failure(let error):
+//            printX("🚫 requestPurchaseReserve 요청 오류\n코드: \(error._code), 메시지: \(error.localizedDescription)")
+//            throw error
+//        }
+//    }
 
-
-    public func requestPurchaseFinishV2(tradeId: String,transactionId: String,environment: String,maxRetries: Int = 3, retryDelay: TimeInterval = 1.0) async throws -> KRInAppPurchaseDTO {
+    public func requestPurchaseFinishV2(tradeId: String,transactionId: String,environment: String,maxRetries: Int = 3, retryDelay: TimeInterval = 1.0) async throws -> IosTransactionDTO {
         
         // 요청 중인지 확인하고, 요청 중이면 에러를 반환
         let shouldProceed = await requestPurchaseFinishStateManager.shouldProceed()
@@ -529,13 +614,15 @@ extension InAppPurchaseService {
             Task { await requestPurchaseFinishStateManager.finishedRequest() }
         }
         
+        let header: HTTPHeaders = AppContext.shared.makeSnackAuthHeaders(includeUserId: true, includeBearer: true)
         
-        let header: HTTPHeaders = commonHeaders()
-        var param = commonParam()
-        
-        param["tradeId"] = tradeId
-        param["transactionId"] = transactionId
-        param["environment"] = environment
+
+        var param: [String: Any] = [
+            "tradeId": tradeId,
+            "transactionId": transactionId,
+            "environment": environment,
+            "isSubscription": false
+        ]
         
         var attempt = 0
         
@@ -549,7 +636,7 @@ extension InAppPurchaseService {
                     headers: header
                 )
                 .validate()
-                .serializingDecodable(KRInAppPurchaseDTO.self)
+                .serializingDecodable(IosTransactionDTO.self)
                 .response
                 
                 switch response.result {
@@ -578,8 +665,8 @@ extension InAppPurchaseService {
                 }
             } catch {
 //                // 예상치 못한 에러 처리 (예: 직렬화 문제)
-//                printX("🚫 예상치 못한 에러: \(error.localizedDescription)")
-//                throw PurchaseError.networkError(error)
+                printX("🚫 예상치 못한 에러: \(error.localizedDescription)")
+                throw PurchaseError.networkRequestError(error)
             }
         }
         
@@ -587,6 +674,77 @@ extension InAppPurchaseService {
         throw PurchaseError.networkRequestError(URLError(.timedOut))
     }
     
+//    public func requestPurchaseFinishV2(tradeId: String,transactionId: String,environment: String,maxRetries: Int = 3, retryDelay: TimeInterval = 1.0) async throws -> KRInAppPurchaseDTO {
+//        
+//        // 요청 중인지 확인하고, 요청 중이면 에러를 반환
+//        let shouldProceed = await requestPurchaseFinishStateManager.shouldProceed()
+//        guard shouldProceed else {
+//            printX("⚠️ 이미 requestPurchaseFinishV2를 요청중입니다 ")
+//            throw PurchaseError.alreadyRequestCoinCharge
+//        }
+//        
+//        // 트랜잭션 함수 종료시에 다시 결제 요청 할수있게 플래그해제
+//        defer {
+//            Task { await requestPurchaseFinishStateManager.finishedRequest() }
+//        }
+//        
+//        
+//        let header: HTTPHeaders = commonHeaders()
+//        var param = commonParam()
+//        
+//        param["tradeId"] = tradeId
+//        param["transactionId"] = transactionId
+//        param["environment"] = environment
+//        
+//        var attempt = 0
+//        
+//        while attempt < maxRetries {
+//            do {
+//                let response = await AF.request(
+//                    PurchaseApiEndpoint.chargeStoreKit2.url,
+//                    method: .post,
+//                    parameters: param,
+//                    encoding: JSONEncoding.default,
+//                    headers: header
+//                )
+//                .validate()
+//                .serializingDecodable(KRInAppPurchaseDTO.self)
+//                .response
+//                
+//                switch response.result {
+//                case .success(let decodeData):
+//                    printX("✅ requestPurchaseFinish 요청 성공")
+//                    return decodeData
+//                case .failure(let error):
+//                    // 에러가 타임아웃인지 확인
+//                    if let urlError = error.underlyingError as? URLError, urlError.code == .timedOut {
+//                        attempt += 1
+//                        printX("🚫 타임아웃 발생. 재시도 시도 \(attempt) / \(maxRetries)...")
+//                        
+//                        if attempt >= maxRetries {
+//                            printX("🚫 최대 재시도 횟수 도달. 타임아웃 에러 반환.")
+//                            throw PurchaseError.networkRequestError(error)
+//                        }
+//                        
+//                        // 재시도 전에 대기
+//                        try await Task.sleep(nanoseconds: UInt64(retryDelay * Double(NSEC_PER_SEC)))
+//                        
+//                    } else {
+//                        // 타임아웃이 아닌 다른 에러는 즉시 반환
+//                        printX("🚫 requestPurchaseFinish 요청 오류\n코드: \(error._code), 메시지: \(error.localizedDescription)")
+//                        throw PurchaseError.networkRequestError(error)
+//                    }
+//                }
+//            } catch {
+////                // 예상치 못한 에러 처리 (예: 직렬화 문제)
+////                printX("🚫 예상치 못한 에러: \(error.localizedDescription)")
+////                throw PurchaseError.networkError(error)
+//            }
+//        }
+//        
+//        // 모든 재시도 실패 시 일반 타임아웃 에러 반환
+//        throw PurchaseError.networkRequestError(URLError(.timedOut))
+//    }
     
     //충전 확인 api
     public func requestPurchaseCheck(tradeId: String) async throws -> PurchaseInquiryDTO {
@@ -604,13 +762,14 @@ extension InAppPurchaseService {
             Task { await requestPurchaseCheckStateManager.finishedRequest() }
         }
         
-        let header: HTTPHeaders = commonHeaders()
-        let param = commonParam()
+        let header: HTTPHeaders = AppContext.shared.makeSnackAuthHeaders(includeUserId: true, includeBearer: true)
+
+        
         let url: String = PurchaseApiEndpoint.paymentInquiry(tradeId: tradeId).url
         
         let response = await AF.request(url,
                    method: .get,
-                   parameters: param,
+                   parameters: nil,
                    encoding: URLEncoding.default,
                    headers: header)
         .validate()
@@ -629,6 +788,48 @@ extension InAppPurchaseService {
             throw PurchaseError.networkRequestError(error)
         }
     }
+//    //충전 확인 api
+//    public func requestPurchaseCheck(tradeId: String) async throws -> PurchaseInquiryDTO {
+//        
+//
+//        // 충전 확인 api 요청 중인지 확인하고, 요청 중이면 에러를 반환
+//        let shouldProceed = await requestPurchaseCheckStateManager.shouldProceed()
+//        guard shouldProceed else {
+//            printX("⚠️ 이미 requestPurchaseCheck를 요청중입니다 ")
+//            throw PurchaseError.alreadyRequestCoinCharge
+//        }
+//        
+//        // 충전 확인 함수 종료시에 다시 결제 요청 할수있게 플래그해제
+//        defer {
+//            Task { await requestPurchaseCheckStateManager.finishedRequest() }
+//        }
+//        
+//        let header: HTTPHeaders = commonHeaders()
+//        let param = commonParam()
+//        
+//        let url: String = PurchaseApiEndpoint.paymentInquiry(tradeId: tradeId).url
+//        
+//        let response = await AF.request(url,
+//                   method: .get,
+//                   parameters: nil,
+//                   encoding: URLEncoding.default,
+//                   headers: header)
+//        .validate()
+//        .responseString { result in
+//            printX(result)
+//        }
+//        .serializingDecodable(PurchaseInquiryDTO.self)
+//        .response
+//        
+//        switch response.result {
+//        case .success(let decodeData):
+//            printX("✅ requestPurchaseCheck 요청 성공")
+//            return decodeData
+//        case .failure(let error):
+//            printX("🚫 requestPurchaseFinish 요청 오류\n코드: \(error._code), 메시지: \(error.localizedDescription)")
+//            throw PurchaseError.networkRequestError(error)
+//        }
+//    }
     
     public func requestPurchaseLog(userId : String, tradeId : String, receipt : String){
         let header: HTTPHeaders = commonHeaders()

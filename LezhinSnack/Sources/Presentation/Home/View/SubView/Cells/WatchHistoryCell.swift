@@ -55,6 +55,15 @@ final class WatchHistoryCell: UICollectionViewCell {
         fatalError("init(coder:)는 지원하지 않습니다. 코드 기반으로 구현해 주세요.")
     }
     
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        reset()
+    }
+    
+    func reset() {
+        // 이전 상태 정리
+        thumbImageView.image = nil
+    }
     
     private func setupUI() {
         
@@ -101,15 +110,27 @@ final class WatchHistoryCell: UICollectionViewCell {
         
     }
     
-    func configure(_ data: HomeSectionEntity) {
-        // 예시 텍스트
-        let fullText = "1화 / 82화"
+    func configure(lastWatch: ContentsLastWatchItemEntity) {
+       
+        if let urlStr = lastWatch.thumbnailUrl, let url = URL(string: urlStr) {
+            thumbImageView.kf.setImage(with: url)
+        } else {
+            thumbImageView.image = nil
+        }
         
+        let currentText = lastWatch.currentEpisode.map(String.init) ?? "-"
+        let maxText     = lastWatch.maxEpisode.map(String.init) ?? "-"
+        let fullText    = "\(currentText)화 / \(maxText)화"
+
+        let episProgress = episodeProgress(current: lastWatch.currentEpisode, total: lastWatch.maxEpisode)
+        updateRandomProgress(progressVal:episProgress)
         setTitleLabelTextColor(fullText)
-        updateRandomProgress()
-        
+        showAnimatedGradientSkeleton(isPlaceholder: false)
+    }
+
+    
+    func configure(_ data: HomeSectionEntity) {
         showAnimatedGradientSkeleton(isPlaceholder: data.isPlaceholder)
-        
     }
     
     func setTitleLabelTextColor(_ text: String) {
@@ -120,7 +141,7 @@ final class WatchHistoryCell: UICollectionViewCell {
         guard components.count == 2 else {
             // "/" 구분자로 나눌 수 없으면 기본 white 색상 적용 후 반환
             let attributedText = NSAttributedString(string: text,
-                                                    attributes: [.foregroundColor: UIColor(.whiteOpacity58)])
+                                                    attributes: [.foregroundColor: UIColor(.foregroundSubtler)])
             titleLabel.attributedText = attributedText
             return
         }
@@ -132,22 +153,19 @@ final class WatchHistoryCell: UICollectionViewCell {
         let resultAttributedText = NSMutableAttributedString()
         
 
-        let firstAttributed = NSAttributedString(string: firstPart, attributes: [.foregroundColor: UIColor(.snackBrandRed)])
+        let firstAttributed = NSAttributedString(string: firstPart, attributes: [.foregroundColor: UIColor(.foregroundBrand)])
         resultAttributedText.append(firstAttributed)
 
-        let secondAttributed = NSAttributedString(string: " / " + secondPart, attributes: [.foregroundColor: UIColor.white])
+        let secondAttributed = NSAttributedString(string: " / " + secondPart, attributes: [.foregroundColor: UIColor(.foregroundSubtler)])
         resultAttributedText.append(secondAttributed)
-
+        
         titleLabel.attributedText = resultAttributedText
     }
     
     
-    func updateRandomProgress() {
-        // 0.0부터 1.0 사이의 랜덤 Float 값 생성
-        let randomProgress = Float.random(in: 0...1)
-        
+    func updateRandomProgress(progressVal: Float) {
         // progressView의 progress를 애니메이션과 함께 업데이트
-        progressView.setProgress(randomProgress, animated: true)
+        progressView.setProgress(progressVal, animated: true)
     }
     
     func showAnimatedGradientSkeleton(isPlaceholder: Bool) {
@@ -158,4 +176,12 @@ final class WatchHistoryCell: UICollectionViewCell {
         }
     }
     
+    /// current/total 을 0...1 로 정규화 (1화=0, 마지막화=1)
+    func episodeProgress(current: Int?, total: Int?) -> Float {
+        guard let total = total, total >= 1,
+              let current = current else { return 0 }
+        if total == 1 { return 0 }                  // 단 1화만 있으면 0%
+        let c = min(max(current, 1), total)         // 1...total 로 클램프
+        return Float(c - 1) / Float(total - 1)
+    }
 }

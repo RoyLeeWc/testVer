@@ -73,6 +73,8 @@ final class TokenService {
         do {
             
             guard isRefreshTokenValid() else {
+                // TODO: 세션 정리/로그아웃 등 후속 처리
+                await clearAll()
                 return false
             }
             
@@ -80,16 +82,14 @@ final class TokenService {
                 "accessToken": accessToken,
                 "refreshToken": refreshToken,
                 "ipAddress": AppContext.shared.deviceIPAddress,
-                "deviceId": "false",
-                "deviceModel": "false"
+                "deviceId": AppContext.shared.deviceUniqueID,
+                "deviceModel": AppContext.shared.deviceModelName
             ]
 
             let refreshRequest = RefreshTokenAPIRequest(parameters: parameters)
-            let response: KRAuthDTO = try await NetworkService.shared.requestAsync(refreshRequest)
+            let response: AuthRefreshDTO = try await NetworkService.shared.requestAsync(refreshRequest)
             
-            if response.result == APIResultType.success {
-                // 토큰 정보 업데이트
-                
+            if response.responseCode == APIResultType.success {
                 guard let accessToken = response.data?.accessToken.token,
                       let refreshToken = response.data?.refreshToken.token,
                       let accessTokenExpiryDate = response.data?.accessToken.expiredAt,
@@ -98,21 +98,17 @@ final class TokenService {
                     return false
                 }
                 
+                // 서버 타임스탬프가 ms 기준이라면 초단위 변환
+                let accessExpSec  = Double(accessTokenExpiryDate)
+                let refreshExpSec = Double(refreshTokenExpiryDate)
                 
                 self.accessToken = accessToken
                 self.refreshToken = refreshToken
-                self.accessTokenExpiryDate = Date(timeIntervalSince1970: Double(accessTokenExpiryDate) / 1000)
-                self.refreshTokenExpiryDate = Date(timeIntervalSince1970: Double(refreshTokenExpiryDate) / 1000)
-                
-                print("엑세스 토큰: \(String(describing: Defaults.accessToken)) ")
-                print("리프레시 토큰: \(String(describing: Defaults.refreshToken))")
-                print("엑세스 토큰: \(String(describing: Defaults.accessTokenExpiryDate))")
-                print("엑세스 토큰: \(String(describing: Defaults.refreshTokenExpiryDate))")
+                self.accessTokenExpiryDate = Date(timeIntervalSince1970: accessExpSec / 1000)
+                self.refreshTokenExpiryDate = Date(timeIntervalSince1970: refreshExpSec / 1000)
                 
                 return true
-                
             } else {
-                
                 return false
             }
         } catch {
@@ -130,5 +126,17 @@ final class TokenService {
         self.refreshToken = refreshToken
         self.accessTokenExpiryDate = Date(timeIntervalSince1970: accessExpiryTimestamp / 1000)
         self.refreshTokenExpiryDate = Date(timeIntervalSince1970: refreshExpiryTimestamp / 1000)
+    }
+    
+    func clearAll() async {
+        Defaults.accessToken = ""
+        Defaults.refreshToken = ""
+        Defaults.accessTokenExpiryDate = nil
+        Defaults.refreshTokenExpiryDate = nil
+        Defaults.userLoginType = AuthProvider.IOS_GUEST.rawValue
+        Defaults.userEmail = ""
+        Defaults.snsId = ""
+        Defaults.userId = 0
+        Defaults.isAgreeMarketing = false
     }
 }

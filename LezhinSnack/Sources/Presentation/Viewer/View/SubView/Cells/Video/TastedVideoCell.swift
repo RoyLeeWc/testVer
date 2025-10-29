@@ -33,7 +33,7 @@ final class TastedVideoCell: UICollectionViewCell, VideoPlayableCell {
     private var player: AVPlayer?
     private var playerLayer: AVPlayerLayer?
     private var timeObserverToken: Any?
-    private var playerItem: AVPlayerItem?
+    var playerItem: AVPlayerItem?
     private var pipController: AVPictureInPictureController?
     private var legibleOutput: AVPlayerItemLegibleOutput?
     // 자막 옵션을 저장할 배열
@@ -53,8 +53,39 @@ final class TastedVideoCell: UICollectionViewCell, VideoPlayableCell {
         return view
     }()
     
+    struct TastedVideoCellViewData: Hashable {
+        let contentsId: String
+        let episodeId: String
+
+        // 맛보기 전용 UI에 필요한 필드들
+        let titleImagePath: String
+        let signatureText: String?
+        let contractType: String?      // "LEZHIN_ORIGINAL" | "BOMTOON_ORIGINAL" | "GENERAL_ORIGINAL" | "OTHERS"
+        let keywordTags: [String]?     // ["키워드1", "키워드2", ...]
+
+        // 공통 상호작용
+        let isLiked: Bool
+        let likeCount: Int
+        let isWished: Bool
+
+        // (선택) 자막
+        let externalSubtitleURLs: [URL]?
+    }
     
+    // ★ 300~600ms 딜레이: 여기선 400ms로 고정(기획 범위 내)
+    private var likeThrottleUntil: DispatchTime = .now()
+    private var likeRequestInFlight = false
+    // ★ 작품 단위 식별/카운트
+    private var workId: String?
+    private var likeCount: Int = 0 {
+        didSet { likeLabel.text = MainVideoCell.formatLikeCount(likeCount) }
+    }
     private var playbackStateObserver: AnyCancellable?
+    
+    // 시청이력 카운터 저장 3초 체크값
+    private var didReport3Sec = false
+    private var currentContentsId: String?
+    private var currentEpisodeId: String?
     
     // 현재 배속 (기본값 1.0)
     var currentPlaybackRate: Float = 1.0
@@ -131,12 +162,19 @@ final class TastedVideoCell: UICollectionViewCell, VideoPlayableCell {
         return label
     }()
     
+    private let keywordLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = .white
+        return label
+    }()
+    
+    
     var isWishedEpisode: Bool = false {
         didSet {
             if isWishedEpisode {
-                self.wishIcon.image = UIImage(named: "ic_bookmark")?.withRenderingMode(.alwaysOriginal)
-            } else {
                 self.wishIcon.image = UIImage(named: "ic_bookmark_fill")?.withRenderingMode(.alwaysOriginal)
+            } else {
+                self.wishIcon.image = UIImage(named: "ic_bookmark")?.withRenderingMode(.alwaysOriginal)
             }
         }
     }
@@ -171,9 +209,9 @@ final class TastedVideoCell: UICollectionViewCell, VideoPlayableCell {
     var isLikeEpisode = false {
         didSet {
             if isLikeEpisode {
-                self.likeIcon.image = UIImage(named: "ic_heart")?.withRenderingMode(.alwaysOriginal)
-            } else {
                 self.likeIcon.image = UIImage(named: "ic_heart_fill")?.withRenderingMode(.alwaysOriginal)
+            } else {
+                self.likeIcon.image = UIImage(named: "ic_heart")?.withRenderingMode(.alwaysOriginal)
             }
         }
     }
@@ -197,7 +235,7 @@ final class TastedVideoCell: UICollectionViewCell, VideoPlayableCell {
         label.textColor = .white
         label.textAlignment = .center
         label.numberOfLines = 0
-        label.text = "1.5천"
+        label.text = "0"
         return label
     }()
     
@@ -233,12 +271,15 @@ final class TastedVideoCell: UICollectionViewCell, VideoPlayableCell {
     }()
     
     // MARK: – 프로모션 뷰 (앞/뒤)
-    private let frontPromotionView = LZSnackPromotionView(
-        type: .allCases.randomElement()!
-    )
+//    private let frontPromotionView = LZSnackPromotionView(
+//        type: .allCases.randomElement()!
+//    )
+    private var frontPromotionView = LZSnackPromotionView(type: .originalIcons) // 기본값
+    private let backTagSlot = UIView() // 여기에 contractType별 TagView를 꽂아줌
+    
     private let backPromotionView = UIView()
 
-    private let backTagView = LZSUtil.makeTagView(type: .lezhin, tagImageSize: CGSize(width: 12, height: 12))
+//    private let backTagView = LZSUtil.makeTagView(type: .lezhin, tagImageSize: CGSize(width: 12, height: 12))
     private let backTitleLabel: UILabel = {
         let label = UILabel()
         label.textColor = .white
@@ -276,6 +317,7 @@ final class TastedVideoCell: UICollectionViewCell, VideoPlayableCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         cleanUp()
+        
     }
     
     func cleanUp() {
@@ -301,6 +343,9 @@ final class TastedVideoCell: UICollectionViewCell, VideoPlayableCell {
         drmConfig = nil
 //        delegate = nil
         hasShownInitControls = false
+        didReport3Sec = false
+        bottomButton.isHidden = true
+        bottomButton.alpha = 0
         
         NotificationCenter.default.removeObserver(self)
         
@@ -408,8 +453,8 @@ final class TastedVideoCell: UICollectionViewCell, VideoPlayableCell {
         backPromotionView.isHidden = true
 
         // 뒷면 내부 구성
-        backPromotionView.addSubview(backTagView)
-        backTagView.snp.makeConstraints { make in
+        backPromotionView.addSubview(backTagSlot)
+        backTagSlot.snp.makeConstraints { make in
             make.leading.top.bottom.equalToSuperview()
             make.width.equalTo(20)
         }
@@ -418,7 +463,7 @@ final class TastedVideoCell: UICollectionViewCell, VideoPlayableCell {
         backTitleLabel.text = "레진코믹스 12주간 로맨스 TOP 1 원작 웹툰"
         backPromotionView.addSubview(backTitleLabel)
         backTitleLabel.snp.makeConstraints { make in
-            make.leading.equalTo(backTagView.snp.trailing).offset(8)
+            make.leading.equalTo(backTagSlot.snp.trailing).offset(8)
             make.trailing.equalToSuperview()
             make.centerY.equalToSuperview()
         }
@@ -430,6 +475,7 @@ final class TastedVideoCell: UICollectionViewCell, VideoPlayableCell {
             make.leading.equalToSuperview()
             make.height.equalTo(48)
             // 이미지가 있어야 계산되므로, 기본 비율(1:1) 대신 안전하게 최소 너비만 지정
+            titleImage.isHidden = true
             if let img = titleImage.image {
                 make.width.equalTo(titleImage.snp.height)
                     .multipliedBy(img.size.width / img.size.height)
@@ -439,24 +485,30 @@ final class TastedVideoCell: UICollectionViewCell, VideoPlayableCell {
         }
         
         
-        let testLabel = UILabel()
-        testLabel.textColor = .white
-        
-        let attributedText = NSMutableAttributedString()
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: UIFont.pretendardMedium(size: 13),
-            .foregroundColor: UIColor.white
-        ]
-        
-        let keywords = ["키워드1", "키워드2", "키워드3", "키워드4", "키워드5"]
-        let keywordsString = keywords.joined(separator: " · ")
-        
-        attributedText.append(NSAttributedString(string: keywordsString, attributes: attributes))
-        testLabel.attributedText = attributedText
         
         
-        topContainerView.addSubview(testLabel)
-        testLabel.snp.makeConstraints { make in
+//        let attributedText = NSMutableAttributedString()
+//        let attributes: [NSAttributedString.Key: Any] = [
+//            .font: UIFont.pretendardMedium(size: 13),
+//            .foregroundColor: UIColor.white
+//        ]
+//        
+//        var keywordNames: [String] {
+//            (keywordTags ?? []).map { $0.name }
+//        }
+//        let keywords = data.contentsDetail?.keywordNames ?? []
+//        let keywordsString = keywords.joined(separator: " · ")
+//        
+//        
+//        let keywords = ["키워드1", "키워드2", "키워드3", "키워드4", "키워드5"]
+//        let keywordsString = keywords.joined(separator: " · ")
+//        
+//        attributedText.append(NSAttributedString(string: keywordsString, attributes: attributes))
+//        testLabel.attributedText = attributedText
+        
+        
+        topContainerView.addSubview(keywordLabel)
+        keywordLabel.snp.makeConstraints { make in
             make.height.equalTo(18)
             make.leading.trailing.equalToSuperview()
             make.top.equalTo(titleImage.snp.bottom).offset(12)
@@ -578,6 +630,17 @@ final class TastedVideoCell: UICollectionViewCell, VideoPlayableCell {
     }
     
     @objc private func likeButtonTapped(_ sender: UIButton) {
+        // 스로틀: 너무 빠른 중복 탭 차단
+        guard DispatchTime.now() >= likeThrottleUntil, !likeRequestInFlight else { return }
+        likeThrottleUntil = .now() + .milliseconds(400)
+
+        
+        // 시각적 피드백(가벼운 터치감)
+        likeIcon.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
+        UIView.animate(withDuration: 0.15, animations: {
+            self.likeIcon.transform = .identity
+        })
+        
         delegate?.videoCellDidTapLikeButton(self)
     }
     
@@ -614,79 +677,81 @@ extension TastedVideoCell: PallyConFPSLicenseDelegate {
 //        guard let url = URL(string: "https://d3fg9k53r6vr6z.cloudfront.net/cmaf/DRM_VIDEO/6aa77ecc-a02c-4fd5-af03-70e2fae39b4d/CMAF1/1min_rainandyou_1080x1920_3M_192kbps.m3u8?Policy=eyJTdGF0ZW1lbnQiOiBbeyJSZXNvdXJjZSI6Imh0dHBzOi8vZDNmZzlrNTNyNnZyNnouY2xvdWRmcm9udC5uZXQvY21hZi9EUk1fVklERU8vNmFhNzdlY2MtYTAyYy00ZmQ1LWFmMDMtNzBlMmZhZTM5YjRkL0NNQUYxLyoiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3NTM1OTYxMzh9fX1dfQ__&Signature=J0gRp3ltTpxadipfWZCPMVig3C7pGjFyEEEzwKfl4FE5WVbqfhrN5tgbz3euWLCCIEE0FpgpBnaO2PDysFGWQRsk1ZCUwM1ePoKcXr9E4wCjixLYIFsLCv~bTfZrQItkZGsbDEueQgrhGeQYa-qcZFgAJGELziLs0hfGVJh66rzXan4x5T~XgEVcaXut2kTgSgRhR1bYToqnXG5z2QzzDiIN4637Kvz1HT26THEgw8o8mTDKG5vW~l2XD7v2TBgF5O8V7Z2ero5NTbk3nGoHe2Ej~VOEvsl9PgkfWkWBOpEKgkFNaIEjcIIFGrXjx6d63A31uYRJ~NDTPbauj3iYIw__&Key-Pair-Id=K2QQMVLCVN7V12") else { return }
         
         
-        // 목업 로컬 더미 비디오
-        guard let url = Bundle.main.url(forResource: "dummy_video", withExtension: "mp4") else { return }
-        
-//        let asset = AVURLAsset(url: url)
-        
-        let certificateUrl = "https://license-global.pallycon.com/ri/fpsKeyManager.do?siteId=UVOO"
-        let contentId      = "13891728"
-        let pallyconToken  = "eyJrZXlfcm90YXRpb24iOmZhbHNlLCJyZXNwb25zZV9mb3JtYXQiOiJvcmlnaW5hbCIsInVzZXJfaWQiOiI1NDEyMyIsImRybV90eXBlIjoiRmFpclBsYXkiLCJzaXRlX2lkIjoiVVZPTyIsImhhc2giOiJqUlFlbU9tN2lQSkxFNERENHBnUWRsZ1dwQU1UZHlpK1FVUkRhMGJIUWw4PSIsImNpZCI6IjEzODkxNzI4IiwicG9saWN5IjoicVF0aXp2UHBBQWxndHgxeDNPNlQwWHpoT3FvOG9aOXJSSmFQQXpQNnc4MD0iLCJ0aW1lc3RhbXAiOiIyMDI1LTA0LTI4VDEyOjQ2OjMyWiJ9"
-        
-        FairPlayStreamManager.shared.prepareDRM(
-            for: contentId,
-            url: url,
-            token: pallyconToken
-        )
-
-        // 2) 재사용 가능한 AVPlayerItem 가져오기
-        playerItem = FairPlayStreamManager.shared.playerItem(
-            for: contentId
-        )
-        player = AVPlayer(playerItem: playerItem)
-        
-//        videoContainerView.makeSecure()
-        
-//        playerItem = AVPlayerItem(asset: asset)
-//        player = AVPlayer(playerItem: playerItem)
-        
-        // AVPlayerLayer 생성 및 셀의 contentView에 추가
-        playerLayer = AVPlayerLayer(player: player)
-        guard let playerLayer = playerLayer else { return }
-        playerLayer.frame = contentView.bounds
-        playerLayer.videoGravity = .resizeAspectFill
-        videoContainerView.layer.insertSublayer(playerLayer, at: 0)
-//        contentView.layer.insertSublayer(playerLayer, at: 0)
-        
-        // 자막 옵션 비동기 로드 및 선택 (UI에서 선택 가능하도록 옵션 저장)
-//        let key = "availableMediaCharacteristicsWithMediaSelectionOptions"
-//        asset.loadValuesAsynchronously(forKeys: [key]) { [weak self] in
-//            var error: NSError?
-//            let status = asset.statusOfValue(forKey: key, error: &error)
+//        // 목업 로컬 더미 비디오
+//        guard let url = Bundle.main.url(forResource: "dummy_video", withExtension: "mp4") else { return }
+//        
+////        let asset = AVURLAsset(url: url)
+//        
+//        let certificateUrl = "https://license-global.pallycon.com/ri/fpsKeyManager.do?siteId=UVOO"
+//        let contentId      = "13891728"
+//        let pallyconToken  = "eyJrZXlfcm90YXRpb24iOmZhbHNlLCJyZXNwb25zZV9mb3JtYXQiOiJvcmlnaW5hbCIsInVzZXJfaWQiOiI1NDEyMyIsImRybV90eXBlIjoiRmFpclBsYXkiLCJzaXRlX2lkIjoiVVZPTyIsImhhc2giOiJqUlFlbU9tN2lQSkxFNERENHBnUWRsZ1dwQU1UZHlpK1FVUkRhMGJIUWw4PSIsImNpZCI6IjEzODkxNzI4IiwicG9saWN5IjoicVF0aXp2UHBBQWxndHgxeDNPNlQwWHpoT3FvOG9aOXJSSmFQQXpQNnc4MD0iLCJ0aW1lc3RhbXAiOiIyMDI1LTA0LTI4VDEyOjQ2OjMyWiJ9"
+//        
+//        FairPlayStreamManager.shared.prepareDRM(
+//            videoId: "",
+//            url: url,
+//            token: pallyconToken,
+//            contentId: contentId,
+//            cfCookieHeader: ""
+//        )
 //
-//            DispatchQueue.main.async {
-//                if status == .loaded {
-//                    if let legibleGroup = asset.mediaSelectionGroup(forMediaCharacteristic: .legible),
-//                       !legibleGroup.options.isEmpty {
-//                        self?.availableSubtitleOptions = legibleGroup.options
-//                        // 기본 자막으로 첫 번째 옵션 선택 (원하는 경우 변경 가능)
-//                        self?.playerItem?.select(self?.availableSubtitleOptions.first, in: legibleGroup)
-//                        print("자막 트랙 선택됨: \(self?.availableSubtitleOptions.first?.displayName ?? "None"), locale: \(self?.availableSubtitleOptions.first?.locale?.identifier ?? "none")")
-//                    } else {
-//                        print("자막 트랙이 없습니다.")
-//                    }
-//                } else {
-//                    print("자막 정보를 불러오지 못했습니다. 오류: \(error?.localizedDescription ?? "Unknown error")")
-//                }
-//            }
-//        }
+//        // 2) 재사용 가능한 AVPlayerItem 가져오기
+//        playerItem = FairPlayStreamManager.shared.playerItem(
+//            for: contentId
+//        )
+//        player = AVPlayer(playerItem: playerItem)
+//        
+////        videoContainerView.makeSecure()
+//        
+////        playerItem = AVPlayerItem(asset: asset)
+////        player = AVPlayer(playerItem: playerItem)
+//        
+//        // AVPlayerLayer 생성 및 셀의 contentView에 추가
+//        playerLayer = AVPlayerLayer(player: player)
+//        guard let playerLayer = playerLayer else { return }
+//        playerLayer.frame = contentView.bounds
+//        playerLayer.videoGravity = .resizeAspectFill
+//        videoContainerView.layer.insertSublayer(playerLayer, at: 0)
+////        contentView.layer.insertSublayer(playerLayer, at: 0)
+//        
+//        // 자막 옵션 비동기 로드 및 선택 (UI에서 선택 가능하도록 옵션 저장)
+////        let key = "availableMediaCharacteristicsWithMediaSelectionOptions"
+////        asset.loadValuesAsynchronously(forKeys: [key]) { [weak self] in
+////            var error: NSError?
+////            let status = asset.statusOfValue(forKey: key, error: &error)
+////
+////            DispatchQueue.main.async {
+////                if status == .loaded {
+////                    if let legibleGroup = asset.mediaSelectionGroup(forMediaCharacteristic: .legible),
+////                       !legibleGroup.options.isEmpty {
+////                        self?.availableSubtitleOptions = legibleGroup.options
+////                        // 기본 자막으로 첫 번째 옵션 선택 (원하는 경우 변경 가능)
+////                        self?.playerItem?.select(self?.availableSubtitleOptions.first, in: legibleGroup)
+////                        print("자막 트랙 선택됨: \(self?.availableSubtitleOptions.first?.displayName ?? "None"), locale: \(self?.availableSubtitleOptions.first?.locale?.identifier ?? "none")")
+////                    } else {
+////                        print("자막 트랙이 없습니다.")
+////                    }
+////                } else {
+////                    print("자막 정보를 불러오지 못했습니다. 오류: \(error?.localizedDescription ?? "Unknown error")")
+////                }
+////            }
+////        }
+//        
+//        // 자막(legible) 출력용 AVPlayerItemLegibleOutput 설정
+//        let output = AVPlayerItemLegibleOutput()
+//        output.setDelegate(self, queue: DispatchQueue.main)
+//        player?.currentItem?.add(output)
+//        legibleOutput = output
+//        
+//        
+//        configurePlayerObservers()
         
-        // 자막(legible) 출력용 AVPlayerItemLegibleOutput 설정
-        let output = AVPlayerItemLegibleOutput()
-        output.setDelegate(self, queue: DispatchQueue.main)
-        player?.currentItem?.add(output)
-        legibleOutput = output
-        
-        
-        configurePlayerObservers()
-        
-        flipTimer = Timer.scheduledTimer(
-            timeInterval: 2.0,
-            target: self,
-            selector: #selector(flipVertical),
-            userInfo: nil,
-            repeats: true
-        )
+//        flipTimer = Timer.scheduledTimer(
+//            timeInterval: 2.0,
+//            target: self,
+//            selector: #selector(flipVertical),
+//            userInfo: nil,
+//            repeats: true
+//        )
         
     }
     
@@ -739,7 +804,15 @@ extension TastedVideoCell: PallyConFPSLicenseDelegate {
             guard let self = self,
                   let duration = player.currentItem?.duration,
                   !self.isUserInteractingWithSlider else { return }
-            
+            let current = CMTimeGetSeconds(time)
+                        if !self.didReport3Sec, current >= 3.0, let contentsId = currentContentsId, let episodeId  = currentEpisodeId {
+                            // 회차 권유 버튼 노출 (부드럽게 페이드인)
+                            self.bottomButton.isHidden = false
+                            UIView.animate(withDuration: 0.25) { self.bottomButton.alpha = 1 }
+                            // 맛보기 시청이력 카운트 이력
+                            self.didReport3Sec = true
+                            self.delegate?.videoCellDidReach3s(self, contentsId: contentsId, episodeId: episodeId)
+                        }
             let currentSeconds = CMTimeGetSeconds(time)
             let totalSeconds   = CMTimeGetSeconds(duration)
             guard totalSeconds.isFinite && totalSeconds > 0 else { return }
@@ -801,5 +874,152 @@ extension TastedVideoCell: AVPlayerItemLegibleOutputPushDelegate {
                        nativeSampleBuffers nativeSamples: [Any],
                        forItemTime itemTime: CMTime) {
 //        printX(strings.first)
+    }
+}
+
+extension TastedVideoCell {
+    private func mapContract(_ s: String?) -> (promo: LZSnackPromotionViewType, tag: TagType?) {
+        switch s {
+        case "LEZHIN_ORIGINAL":
+            return (.lezhinIPIcons, .lezhin)
+        case "BOMTOON_ORIGINAL":
+            return (.bomtoonIPIcons, .bomtoon)
+        case "GENERAL_ORIGINAL":
+            return (.originalIcons, .original)
+        default: // "OTHERS" 또는 nil
+            // 프로모션은 기본(original) 노출, 태그는 숨김
+            return (.originalIcons, nil)
+        }
+    }
+
+    /// 실제 UI에 반영 (front/back 모두)
+    private func applyContractType(_ contractType: String?) {
+        let type = mapContract(contractType)
+        
+        // 1) 프론트 프로모션 뷰 교체
+        frontPromotionView.removeFromSuperview()
+        frontPromotionView = LZSnackPromotionView(type: type.promo)
+        promoFlipContainer.addSubview(frontPromotionView)
+        frontPromotionView.snp.makeConstraints { make in
+            make.top.leading.equalToSuperview()
+            make.height.equalTo(20)
+        }
+        frontPromotionView.isHidden = !isShowingFront
+        backPromotionView.isHidden  =  isShowingFront
+        
+        // 2) 백 태그 뷰 교체
+        backTagSlot.subviews.forEach { $0.removeFromSuperview() }
+        if let tag = type.tag {
+            let tagView = LZSUtil.makeTagView(type: tag, tagImageSize: CGSize(width: 12, height: 12))
+            backTagSlot.addSubview(tagView)
+            tagView.snp.makeConstraints { make in
+                make.edges.equalToSuperview()
+            }
+            backTagSlot.isHidden = false
+        } else {
+            backTagSlot.isHidden = true
+        }
+        
+        if contractType != nil {
+            flipTimer = Timer.scheduledTimer(
+                timeInterval: 2.0,
+                target: self,
+                selector: #selector(flipVertical),
+                userInfo: nil,
+                repeats: true
+            )
+        }
+    }
+    
+    /// 메타만 적용 (타이틀/회차/좋아요/찜 등) — willDisplay에서 호출
+    func applyUIOnly(_ meta: TastedVideoCellViewData) {
+        
+        let attributedText = NSMutableAttributedString()
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.pretendardMedium(size: 13),
+            .foregroundColor: UIColor.white
+        ]
+
+        let keywords = meta.keywordTags ?? []
+        let keywordsString = keywords.joined(separator: " · ")
+     
+        attributedText.append(NSAttributedString(string: keywordsString, attributes: attributes))
+        keywordLabel.attributedText = attributedText
+
+        isLikeEpisode = meta.isLiked
+        isWishedEpisode = meta.isWished
+        likeCount = meta.likeCount
+        backTitleLabel.text = meta.signatureText
+        titleImage.kf.setImage(with: URL(string: meta.titleImagePath))
+        titleImage.isHidden = false
+        applyContractType(meta.contractType)
+        currentContentsId = meta.contentsId
+        currentEpisodeId = meta.episodeId
+        
+        bottomButton.isHidden = true
+        bottomButton.alpha = 0
+       
+    }
+    
+    
+    /// 실제 플레이어 아이템 연결 — didPreparePlayback에서만 호출
+    func apply(playerItem: AVPlayerItem, meta: TastedVideoCellViewData) {
+        // 동일 회차에 대한 중복 적용 방지
+        //        if appliedEpisodeId == meta.episodeId { return }
+        //        appliedEpisodeId = meta.episodeId
+        
+        // 기존 연결 싹 정리
+        cleanUp()
+        
+        let attributedText = NSMutableAttributedString()
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.pretendardMedium(size: 13),
+            .foregroundColor: UIColor.white
+        ]
+
+        let keywords = meta.keywordTags ?? []
+        let keywordsString = keywords.joined(separator: " · ")
+     
+        attributedText.append(NSAttributedString(string: keywordsString, attributes: attributes))
+        keywordLabel.attributedText = attributedText
+
+        isLikeEpisode = meta.isLiked
+        isWishedEpisode = meta.isWished
+        likeCount = meta.likeCount
+        backTitleLabel.text = meta.signatureText
+        titleImage.kf.setImage(with: URL(string: meta.titleImagePath))
+        titleImage.isHidden = false
+        applyContractType(meta.contractType)
+        currentContentsId = meta.contentsId
+        currentEpisodeId = meta.episodeId
+        bottomButton.isHidden = true
+        bottomButton.alpha = 0
+        
+        
+        // Player/Layer 연결
+        self.playerItem = playerItem
+        let player = AVPlayer(playerItem: playerItem)
+        self.player = player
+        
+        let layer = AVPlayerLayer(player: player)
+        layer.frame = contentView.bounds
+        layer.videoGravity = .resizeAspectFill
+        videoContainerView.layer.insertSublayer(layer, at: 0)
+        self.playerLayer = layer
+        
+        // 내장 자막 그룹 확보
+        if let asset = playerItem.asset as? AVURLAsset,
+           let group = asset.mediaSelectionGroup(forMediaCharacteristic: .legible) {
+            availableSubtitleOptions = group.options
+        }
+        
+        // 자막 출력용 output 연결
+        let output = AVPlayerItemLegibleOutput()
+        output.setDelegate(self, queue: .main)
+        player.currentItem?.add(output)
+        self.legibleOutput = output
+        
+        // 5) 옵저버 연결
+        configurePlayerObservers()
     }
 }

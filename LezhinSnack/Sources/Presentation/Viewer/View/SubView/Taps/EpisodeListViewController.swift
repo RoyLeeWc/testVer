@@ -22,6 +22,14 @@ final class EpisodeListViewController: UIViewController {
     
     private var isAlreadyShowTooltip: Bool = false
     
+    private var initialSelectedIndex: Int?
+    
+    // 헤더 타이틀 캐시 (“N화~N화(완결)”)
+    private var headerTitleText: String = ""
+    
+    // ⬇️ 상세 엔티티 보관(헤더 문구 계산에만 사용)
+    private var contents: DisplayContentsDetailEntity?
+    
     // 최하단 그라디언트 뷰
     private let gradientView: UIView = {
         let view = UIView()
@@ -59,6 +67,58 @@ final class EpisodeListViewController: UIViewController {
         fetchData()
     }
     
+    private func currentUnixSeconds() -> Int64 {
+        Int64(Date().timeIntervalSince1970)
+    }
+    
+    func isEarlyAccess(isPreview: Bool, previewOpenedAt: Int64?) -> Bool {
+        guard isPreview, let t = previewOpenedAt, t > 0 else { return false }
+        return t > currentUnixSeconds()
+    }
+    
+    // 실데이터 → 셀에서 쓰는 얇은 뷰모델로 변환 + 스냅샷 적용
+    func prefill(from episodes: [ContentsEpisodeEntity], contents: DisplayContentsDetailEntity, purchasedEpisodeIds: Set<String> = []) {
+        self.contents = contents
+        // 1) 회차index 만들기 (alias → Int)
+        let mapped: [EpisodeListEntity] = episodes.map { ep in
+            let episodeID = ep.episodeId
+            let idx = Int(ep.alias) ?? 0
+            // (A) 얼리 여부: isPreview && previewOpenedAt가 현재 이후
+            let isEarly = isEarlyAccess(isPreview: ep.isPreview, previewOpenedAt: ep.previewOpenedAt)
+            // (B) 구매여부 추가로 판별후 잠금해제
+            let purchased = purchasedEpisodeIds.contains(ep.episodeId)
+            // (C) 잠금: 무료가 아니고 & 미구매면 잠금  // 멤버십 추후 반영
+            let locked = (!ep.isFree) && (!purchased)
+
+            return EpisodeListEntity(
+                contentsID: contents.id,
+                episodeID: ep.episodeId,
+                episodeIndex: idx,
+                isLocked: locked,
+                isEarlyAccess: isEarly,
+                contentsAlias: contents.alias,
+                episodeAlias: ep.alias,
+                isFirstEarlyAccess: false
+                
+            )
+        }
+        // 2) 가장 빠른 얼리액세스 하나에만 툴팁 플래그
+        var uiList = mapped
+        if let firstEA = uiList.filter(\.isEarlyAccess).map(\.episodeIndex).min() {
+            uiList = uiList.map { var episodeList = $0; episodeList.isFirstEarlyAccess = ($0.episodeIndex == firstEA); return episodeList }
+        }
+        
+        // 3) 헤더 문구 미리 계산 (최초 1회 세팅)
+        let nums = episodes.compactMap { Int($0.alias) }
+        let minIdx = nums.min() ?? 1
+        let maxIdx = nums.max() ?? 1
+        let fin = (contents.isComplete == true) ? "(완결)" : ""
+        headerTitleText = "\(minIdx)화~\(maxIdx)화\(fin)"
+        
+        // 4) 스냅샷 적용(메인큐)
+        applySnapshot(items: uiList)
+    }
+    
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         
@@ -90,10 +150,52 @@ final class EpisodeListViewController: UIViewController {
                 self?.applySnapshot(items: episodeList)
             }
             .store(in: &subscriptions)
+        
+        viewModel.$episodeDetailList
+            .compactMap { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] episodeDetailList in
+                
+                NotificationCenter.default.post(
+                    name: .LZSPurchaseEpisodeReceiveNotification,
+                    object: episodeDetailList.possessionCoin // Int
+                )
+            }
+            .store(in: &subscriptions)
+    }
+    
+    /// ✅ ContentSelection에서 현재 회차 인덱스만 먼저 전달
+    func setInitialSelectedIndex(_ index: Int) {
+        initialSelectedIndex = index
+        if isViewLoaded { selectInitialItemIfNeeded() }
+    }
+    
+    private func selectInitialItemIfNeeded() {
+        guard let idx = initialSelectedIndex else { return }
+        let total = dataSource.snapshot().numberOfItems
+        guard total > 0 else { return }
+        
+        // 범위 보정
+        let clamped = max(0, min(idx, total - 1))
+        let indexPath = IndexPath(item: clamped, section: 0)
+        
+        // 혹시 기존 선택이 남아있으면 정리
+        (collectionView.indexPathsForSelectedItems ?? []).forEach {
+            collectionView.deselectItem(at: $0, animated: false)
+        }
+        
+        // 선택 적용 → isSelected 트리거 → 로띠 실행
+        collectionView.selectItem(at: indexPath, animated: false, scrollPosition: [])
+        
+        // 화면에 안 보이면 한 번만 스크롤
+        if !collectionView.indexPathsForVisibleItems.contains(indexPath) {
+            collectionView.scrollToItem(at: indexPath, at: .centeredVertically, animated: false)
+        }
     }
     
     private func fetchData() {
-        viewModel.fetchEpisodes()
+        
+//        viewModel.fetchEpisodes()
     }
     
     private func configureCollectionView() {
@@ -201,9 +303,10 @@ final class EpisodeListViewController: UIViewController {
             self.collectionView.layoutIfNeeded()
             let isScrollable = self.collectionView.contentSize.height > self.collectionView.bounds.height
             self.gradientView.isHidden = !isScrollable
+            // ✅ 데이터가 들어온 직후 현재 회차로 스크롤
+            self.selectInitialItemIfNeeded()
         }
     }
-    
     
     private func configureDataSource() {
         // Diffable Data Source 설정: 커스텀 셀 사용
@@ -223,17 +326,10 @@ final class EpisodeListViewController: UIViewController {
                 for: indexPath) as? ContentsListHeader else {
                 return UICollectionReusableView()
             }
-            
-            headerView.headerTitle.text = "1~100화"
-            
-            
+            headerView.headerTitle.text = self?.headerTitleText.isEmpty == false ? self!.headerTitleText : "회차"
             return headerView
-            
         }
-        
-
     }
-    
 }
 
 
@@ -283,10 +379,14 @@ extension EpisodeListViewController: UICollectionViewDelegate, EpisodeListCellDe
         print("선택된 에피소드:", entity.episodeIndex, "잠금:", entity.isLocked)
         
         if entity.isLocked {
-            NotificationCenter.default.post(name: .LZSPurchaseEpisodeReceiveNotification, object: nil)
+            viewModel.fetchEpisodeDetails(contentsAlias: entity.contentsAlias, episodeAlias: entity.episodeAlias)
+//            NotificationCenter.default.post(name: .LZSPurchaseEpisodeReceiveNotification, object: nil)
         } else {
-            NotificationCenter.default.post(name: .LZSEarlyAccessReceiveNotification, object: nil)
-            NotificationCenter.default.post(name: .LZSChangeEpisodeReceiveNotification, object: entity.episodeIndex)
+//            NotificationCenter.default.post(name: .LZSEarlyAccessReceiveNotification, object: nil)
+            // ✅ alias(표기 숫자)가 아니라, 실제 스크롤에 쓰일 0-based 인덱스를 보낸다
+//            NotificationCenter.default.post(name: .LZSChangeEpisodeReceiveNotification, object: indexPath.item)
+            
+            //            NotificationCenter.default.post(name: .LZSChangeEpisodeReceiveNotification, object: entity.episodeIndex)
         }
     }
     

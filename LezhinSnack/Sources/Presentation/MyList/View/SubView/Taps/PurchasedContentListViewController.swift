@@ -16,7 +16,7 @@ final class PurchasedContentListViewController: UIViewController {
     }
     
     private var collectionView: UICollectionView!
-    private var dataSource: UICollectionViewDiffableDataSource<Section, PurchasedContentEntity>!
+    private var dataSource: UICollectionViewDiffableDataSource<Section, PurchasedContentItemEntity>!
     private var overlayEditView: UIView?
     
     
@@ -48,7 +48,7 @@ final class PurchasedContentListViewController: UIViewController {
         didSet {
             // 화면에 보이는 셀 모두에 편집 모드 플래그 전달
             collectionView.visibleCells
-                .compactMap { $0 as? WishCell }
+                .compactMap { $0 as? PurchasedContentCell }
                 .forEach { $0.isEditingMode = isEditingMode }
             
             collectionView.allowsSelection = isEditingMode
@@ -67,10 +67,18 @@ final class PurchasedContentListViewController: UIViewController {
             isEditingMode ? showOverlayView() : hideOverlayView()
             floatingActionButton.isHidden = !isEditingMode
             
+            if isEditingMode {
+                viewModel.enterEditMode()
+                DispatchQueue.main.async { [weak self] in self?.clearSelectionsAndUI() }
+            } else {
+                viewModel.exitEditMode()
+                clearSelectionsAndUI()
+            }
+            
         }
     }
     
-    var items: [PurchasedContentEntity] = []
+    var items: [PurchasedContentItemEntity] = []
     
     let viewModel: PurchasedContentListViewModel
     
@@ -96,7 +104,7 @@ final class PurchasedContentListViewController: UIViewController {
     
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        isEditingMode = false
+        if isEditingMode { isEditingMode = false }
     }
     
     private func setupUI() {
@@ -107,19 +115,27 @@ final class PurchasedContentListViewController: UIViewController {
     }
     
     private func bind() {
-        viewModel.$purchasedContentList
+        viewModel.$items
+            .receive(on: RunLoop.main)
+            .sink { [weak self] array in
+                self?.items = array
+                self?.applySnapshot(items: array)
+            }
+            .store(in: &subscriptions)
+        
+        viewModel.$errorMessage
             .compactMap { $0 }
             .receive(on: RunLoop.main)
-            .sink { [weak self] purchasedContentList in
-                guard let self else { return }
-                items.append(contentsOf: purchasedContentList)
-                self.applySnapshot(items: items)
+            .sink { [weak self] msg in
+                let toast = LZSnackToastView(text: msg, showsIcon: false)
+                guard let view = self?.view else { return }
+                LZSnackToastHelper.showOnce(on: view, toast: toast, duration: 3.0)
             }
             .store(in: &subscriptions)
     }
     
     private func initializeEmptySnapshot() {
-        var snapshot = NSDiffableDataSourceSnapshot<Section, PurchasedContentEntity>()
+        var snapshot = NSDiffableDataSourceSnapshot<Section, PurchasedContentItemEntity>()
         // 2) 섹션만 등록 (.main)
         snapshot.appendSections([.main])
         // 3) 아이템은 따로 append하지 않음 → 빈 상태
@@ -127,7 +143,7 @@ final class PurchasedContentListViewController: UIViewController {
     }
     
     private func fetchData() {
-        viewModel.fetchPurchasedContentList()
+        viewModel.loadInitial()
     }
     
     private func configureFloatingButton() {
@@ -165,12 +181,12 @@ final class PurchasedContentListViewController: UIViewController {
         
         collectionView.delegate = self
         collectionView.addPullToRefresh { [weak self] in
-            self?.fetchData()
+            self?.viewModel.hardRefresh()
         }
     }
     
     private func configureEmptyContentLabel() {
-        emptyContentsLabel.text = "내목록_빈목록_타이틀".localized
+        emptyContentsLabel.text = "내목록_빈구매목록_타이틀".localized
         collectionView.backgroundView = emptyContentsLabel
     }
     
@@ -242,7 +258,6 @@ final class PurchasedContentListViewController: UIViewController {
             make.centerY.equalTo(closeButton)
         }
         
-        
         let totalCheckBox = LZSnackCheckBox()
         self.totalCheckBox = totalCheckBox
         
@@ -281,13 +296,12 @@ final class PurchasedContentListViewController: UIViewController {
     
     private func configureDataSource() {
         // Diffable Data Source 설정: 커스텀 셀 사용
-        dataSource = UICollectionViewDiffableDataSource<Section, PurchasedContentEntity>(collectionView: collectionView) { [weak self] collectionView, indexPath, item -> UICollectionViewCell? in
+        dataSource = UICollectionViewDiffableDataSource<Section, PurchasedContentItemEntity>(collectionView: collectionView) { [weak self] collectionView, indexPath, item -> UICollectionViewCell? in
             guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: PurchasedContentCell.reuseIdentifier, for: indexPath) as? PurchasedContentCell else { return nil }
             guard let self = self else { return nil }
             cell.isEditingMode = self.isEditingMode
             cell.configure(with: item)
             cell.updateEditingMode()
-            
             return cell
         }
         
@@ -305,17 +319,13 @@ final class PurchasedContentListViewController: UIViewController {
             headerView.historySortButton.addTarget(self,
                                                    action: #selector(self?.didTapSortButton(_:)),
                                         for: .touchUpInside)
-            
-            
             return headerView
-            
         }
-        
     }
     
-    private func applySnapshot(items: [PurchasedContentEntity]) {
+    private func applySnapshot(items: [PurchasedContentItemEntity]) {
         collectionView.refreshControl?.endRefreshing()
-        var snapshot = NSDiffableDataSourceSnapshot<Section, PurchasedContentEntity>()
+        var snapshot = NSDiffableDataSourceSnapshot<Section, PurchasedContentItemEntity>()
         snapshot.appendSections([.main])
         snapshot.appendItems(items)
         dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
@@ -344,13 +354,19 @@ extension PurchasedContentListViewController: UICollectionViewDelegate {
     }
     
     private func applySort(_ option: WatchHistorySortOption) {
+        let newSort: ContentsListSort
         switch option {
         case .recent:
+            newSort = .recent
             print("최근 순으로 정렬")
         case .old:
+            newSort = .oldest
             print("오래된 순으로 정렬")
+        case .episodeUpdated:
+            newSort = .episodeUpdated
+            print("회차 업데이트 순으로 정렬")
         }
-        // 데이터 정렬 후 snapshot 갱신 …
+        viewModel.updateSort(newSort)
     }
 
     
@@ -386,29 +402,79 @@ extension PurchasedContentListViewController: UICollectionViewDelegate {
             },
             rightButtonTitle: "삭제",
             rightHandler: { [weak self] in
-                self?.items.removeAll(where: { selectedItems.contains($0) })
-                guard var snapshot = self?.dataSource.snapshot() else { return }
-                snapshot.deleteItems(selectedItems)
-                self?.dataSource.apply(snapshot, animatingDifferences: true) { [weak self] in
-                    self?.isEditingMode = false
-                    let toastView = LZSnackToastView(text: "삭제가 완료되었습니다.", showsIcon: false)
+                self?.view.isUserInteractionEnabled = false
+                self?.viewModel.delete(items: selectedItems) { [weak self] success in
+                    guard let self else { return }
+                    self.view.isUserInteractionEnabled = true
                     
-                    guard let self = self else { return }
-                    LZSnackToastHelper.showOnce(on: self.view, toast: toastView,duration: 5.0)
-                    self.updateEmptyState()
+                    if success {
+                        var snapshot = self.dataSource.snapshot()
+                        snapshot.deleteItems(selectedItems)
+                        self.dataSource.apply(snapshot, animatingDifferences: true) { [weak self] in
+                            self?.updateEmptyState()
+                            self?.isEditingMode = false
+                            let toast = LZSnackToastView(text: "삭제가 완료되었습니다.", showsIcon: false)
+                            guard let view = self?.view else { return }
+                            LZSnackToastHelper.showOnce(on: view, toast: toast, duration: 2.0)
+                        }
+                    } else {
+                        let toast = LZSnackToastView(text: "삭제에 실패했습니다.", showsIcon: false)
+                        LZSnackToastHelper.showOnce(on: self.view, toast: toast, duration: 2.0)
+                    }
                 }
             }
         )
         popup.show()
     }
     
-    // 셀 선택 처리
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        updateHeaderCheckbox()
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard viewModel.canPaginate else { return }
+        let offY = scrollView.contentOffset.y
+        let contentH = scrollView.contentSize.height
+        let visibleH = scrollView.bounds.height
+        if offY > contentH - visibleH - 400 {
+            let lastIndex = max(0, dataSource.snapshot().numberOfItems - 1)
+            viewModel.loadNextPageIfNeeded(currentIndex: lastIndex)
+        }
+    }
+    
+    // 선택/버튼/헤더 초기화
+    private func clearSelectionsAndUI() {
+        collectionView.indexPathsForSelectedItems?.forEach {
+            collectionView.deselectItem(at: $0, animated: false)
+        }
+        collectionView.visibleCells.compactMap { $0 as? PurchasedContentCell }.forEach {
+            $0.isSelected = false
+            $0.updateEditingMode()
+        }
+        totalCheckBox?.setState(.unchecked)
         updateFloatingActionButton()
     }
     
+    
+    // 셀 선택 처리
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        if isEditingMode {
+            // 편집 모드일 땐 기존 셀렉션 로직
+            updateHeaderCheckbox()
+            updateFloatingActionButton()
+        } else {
+            // 일반 모드일 땐 '탭' 이벤트로 처리
+            collectionView.deselectItem(at: indexPath, animated: true)
+            guard let item = dataSource.itemIdentifier(for: indexPath) else { return }
+            handleTap(on: item)
+        }
+    }
+    
+    private func handleTap(on item: PurchasedContentItemEntity) {
+        let playInput = PlayInput(contentsAlias: item.contentsAlias, episodeAlias: "")
+        let route = ViewerRoute.main(playInput)
+        guard let vc = AppContext.container.resolve(ViewerViewController.self,arguments: ViewerType.mainViewer, route) else { return }
+        navigationController?.pushHidesBottomBarViewController(vc, animated: true)
+    }
+    
     func collectionView(_ collectionView: UICollectionView, didDeselectItemAt indexPath: IndexPath) {
+        guard isEditingMode else { return }
         updateHeaderCheckbox()
         updateFloatingActionButton()
     }

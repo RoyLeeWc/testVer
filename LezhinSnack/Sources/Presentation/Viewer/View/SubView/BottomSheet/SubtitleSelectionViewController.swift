@@ -64,7 +64,7 @@ final class SubtitleSelectionViewController: UIViewController {
         tableView.dataSource = self
         tableView.backgroundColor = UIColor(.clear)
         
-        tableView.separatorStyle = .none // 구분선 제거
+        tableView.separatorStyle = .none
         tableView.isScrollEnabled = false
         tableView.register(SubtitleCell.self, forCellReuseIdentifier: SubtitleCell.reuseIdentifier)
         

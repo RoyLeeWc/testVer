@@ -116,3 +116,23 @@ final class LZSnackSearchTextField: UITextField {
 //        return rect
 //    }
 }
+
+extension LZSnackSearchTextField {
+    /// 검색바 UI를 그대로 쓰되 닉네임 입력에 맞게 세팅
+    func configureForNickname(placeholder: String = "닉네임을 입력하세요") {
+        self.placeholder = placeholder
+        self.attributedPlaceholder = NSAttributedString(
+            string: placeholder,
+            attributes: [
+                .foregroundColor: UIColor(.foregroundSubtler),
+                .font: UIFont.pretendardRegular(size: 14)
+            ]
+        )
+        self.textContentType = .nickname
+        self.keyboardType = .default
+        self.returnKeyType = .done
+        self.autocorrectionType = .no
+        self.autocapitalizationType = .none
+        self.enablesReturnKeyAutomatically = true
+    }
+}

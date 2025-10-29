@@ -29,4 +29,11 @@ final class SignUpAgreementListViewModel {
         }
     }
     
+    func welcomefetchAgreementList() {
+        LZSnackConcurrencyManager.run { [weak self] in
+            guard let self else { return }
+            agreementList = try await authUseCase.executeWelcomeFetchAgreementList()
+        }
+    }
+    
 }

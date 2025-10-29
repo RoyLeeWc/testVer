@@ -45,15 +45,18 @@ final class IAPBottomSheetViewController: UIViewController {
     private var subscriptions = Set<AnyCancellable>()
     
     
-    private var currentCoins: [CoinProductEntity] = []
-    private var currentMemberships: [MembershipProductEntity]?
+    private var currentCoins: [ProductItemEntity] = []
+    private var currentMemberships: [ProductItemEntity]? = nil
+    private var firstPurchaseCoinIds: Set<Int> = []
     
     let viewModel: IAPBottomSheetViewModel
-    var currentCoinBalance: String = "0"
     
-    init?(viewModel: IAPBottomSheetViewModel, currentCoinBalance: String) {
+    var currentCoinBalance: String = "0"
+    var requiredCoinBalance: String = "0"
+    
+    init?(viewModel: IAPBottomSheetViewModel, requiredCoinBalance: String) {
         self.viewModel = viewModel
-        self.currentCoinBalance = currentCoinBalance
+        self.requiredCoinBalance = requiredCoinBalance
         super.init(nibName: nil, bundle: nil)
     }
     
@@ -82,6 +85,15 @@ final class IAPBottomSheetViewController: UIViewController {
 //    }
     
     private func bind() {
+        
+        viewModel.$firstPurchaseCoinIds
+            .receive(on: RunLoop.main)
+            .sink { [weak self] ids in
+                self?.firstPurchaseCoinIds = ids
+                self?.applySnapshot()
+            }
+            .store(in: &subscriptions)
+                   
         viewModel.$coinProductList
             .receive(on: RunLoop.main)
             .sink { [weak self] coinProductList in
@@ -129,8 +141,8 @@ final class IAPBottomSheetViewController: UIViewController {
     }
     
     private func fetchData() {
-        viewModel.fetchCoinProduct()
-        viewModel.fetchMembershipProduct()
+        viewModel.fetchProduct()
+//        viewModel.fetchMembershipProduct()
     }
     
     private func setupGrabberView() {
@@ -253,12 +265,15 @@ final class IAPBottomSheetViewController: UIViewController {
     private func configureDataSource() {
         dataSource = UICollectionViewDiffableDataSource<PurchaseSection, PurchaseItem>(collectionView: collectionView) { [weak self] collectionView, indexPath, item in
             switch item {
-            case .coin(let coin):
+            case .coin(let coin, let isFirst):
                 guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: BottomSheetCoinProductCell.reuseIdentifier, for: indexPath) as? BottomSheetCoinProductCell else { return UICollectionViewCell()}
-                cell.configure(with: coin)
+
+                let isFirst = self?.firstPurchaseCoinIds.contains(coin.productId)
+                cell.configure(with: coin, isFirstPurchase: isFirst ?? false)
                 return cell
             case .membership(let member):
                 guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: BottomSheetMembershipProductCell.reuseIdentifier, for: indexPath) as? BottomSheetMembershipProductCell else { return UICollectionViewCell()}
+                
                 cell.configure(with: member)
                 return cell
             case .footer(let info):
@@ -280,6 +295,8 @@ final class IAPBottomSheetViewController: UIViewController {
                 
                 headerView.delegate = self
                 headerView.currentUserCoinView.setCoinText(self?.currentCoinBalance ?? "0")
+                headerView.requiredCoinView.setCoinText(self?.requiredCoinBalance ?? "1000")
+                
                 return headerView
             case .membership:
                 guard let headerView = collectionView.dequeueReusableSupplementaryView(
@@ -316,7 +333,7 @@ final class IAPBottomSheetViewController: UIViewController {
         if !currentCoins.isEmpty {
             // currentCoins 배열을 PurchaseItem으로 매핑
             let coinItems: [PurchaseItem] = currentCoins.map { coinModel in
-                .coin(coinModel)
+                    .coin(entity: coinModel, isFirst: firstPurchaseCoinIds.contains(coinModel.productId))
             }
             snapshot.appendItems(coinItems, toSection: .coin)
         } else {
@@ -336,7 +353,6 @@ final class IAPBottomSheetViewController: UIViewController {
             // 배열이 nil이거나 비어있다면 빈 배열을 추가
             snapshot.appendItems([], toSection: .membership)
         }
-        
         // 5) 만들어진 스냅샷을 데이터 소스에 적용
         //    true로 주면 변경된 부분만 애니메이션으로 업데이트됨
         dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in

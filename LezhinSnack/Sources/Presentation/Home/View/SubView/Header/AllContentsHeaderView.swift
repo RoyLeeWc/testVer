@@ -53,15 +53,15 @@ final class AllContentsHeaderView: UICollectionReusableView {
     required init?(coder: NSCoder) { fatalError() }
     
     private func setupUI() {
-        sortButton.setContentHuggingPriority(.required, for: .horizontal)
-        sortButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        
-        addSubview(sortButton)
-        sortButton.snp.makeConstraints { make in
-            make.trailing.equalToSuperview().offset(-20)
-            make.width.equalTo(120)
-            make.centerY.equalToSuperview()
-        }
+//        sortButton.setContentHuggingPriority(.required, for: .horizontal)
+//        sortButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+//        
+//        addSubview(sortButton)
+//        sortButton.snp.makeConstraints { make in
+//            make.trailing.equalToSuperview().offset(-20)
+//            make.width.equalTo(120)
+//            make.centerY.equalToSuperview()
+//        }
         
         
         addSubview(titleLabel)
@@ -71,7 +71,7 @@ final class AllContentsHeaderView: UICollectionReusableView {
             make.centerY.equalToSuperview()
         }
         
-        sortButton.addTarget(self, action: #selector(didTapSortButton), for: .touchUpInside)
+//        sortButton.addTarget(self, action: #selector(didTapSortButton), for: .touchUpInside)
         
     }
     

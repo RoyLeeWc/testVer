@@ -11,6 +11,13 @@ import SnapKit
 import Combine
 import Pageboy
 
+struct ContentSelectionInput {
+    let contents: DisplayContentsDetailEntity               // 상세 엔티티
+    let episodes: [ContentsEpisodeEntity]              // 회차 목록 엔티티
+    let currentIndex: Int                             // 처음 포커스할 회차 인덱스
+    let purchasedEpisodeIds: Set<String>?
+}
+
 final class ContentSelectionViewController: TabmanViewController {
     
     deinit {
@@ -23,9 +30,43 @@ final class ContentSelectionViewController: TabmanViewController {
     
     private let grabberView = LZSnackGrabberView()
     
+    private var selectionInput: ContentSelectionInput?
+
+        // ✅ 외부에서 주입
+    func attach(input: ContentSelectionInput) {
+        self.selectionInput = input
+        if isViewLoaded { propagateInputToChildren() }
+    }
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         setupUI()
+        // children이 만들어지고 나서 한번 더 전달
+        propagateInputToChildren()
+    }
+    private func propagateInputToChildren() {
+        guard let input = selectionInput else { return }
+        
+        //  자식 VC들 확보
+        guard !viewControllers.isEmpty else { return }
+        let episodeVC = viewControllers.compactMap { $0 as? EpisodeListViewController }.first
+        let detailVC  = viewControllers.compactMap { $0 as? ContentsDetailViewController }.first
+        
+        // 회차 탭: 현재 인덱스만 우선 전달(데이터는 기존 fetch를 사용)
+        episodeVC?.setInitialSelectedIndex(input.currentIndex)
+        
+        // 회차 탭에 실데이터 회차 배열 전달(여기서 UI용으로 얇게 변환)
+        episodeVC?.prefill(from: input.episodes, contents: input.contents, purchasedEpisodeIds: input.purchasedEpisodeIds ?? [])
+        
+        //  상세 탭: 상세 엔티티 전달
+        detailVC?.attach(contents: input.contents)
+        
+        //  상단 타이틀 이미지도 detail에서 세팅(있으면)
+        if let urlStr = input.contents.titleImagePath {
+            let thumbnailImagePathUrl = URL(string: urlStr )
+            titleImageView.kf.setImage(with: thumbnailImagePathUrl)
+       
+        }
     }
     
     private func setupUI() {
@@ -99,20 +140,14 @@ final class ContentSelectionViewController: TabmanViewController {
     }
     
     private func makeVCs() -> [UIViewController] {
-        
         guard let firstVC = AppContext.container.resolve(EpisodeListViewController.self) else {
             fatalError()
         }
         let secVC   = ContentsDetailViewController()
-        let thirdVC = RelatedContentViewController()
+        let thirdVC = RelatedContentViewController()   // ← 이번 작업 제외
         
-        return [
-            firstVC,
-            secVC,
-            thirdVC
-        ]
+        return [firstVC, secVC, thirdVC]
     }
-    
 }
 
 extension ContentSelectionViewController: PageboyViewControllerDataSource, TMBarDataSource {

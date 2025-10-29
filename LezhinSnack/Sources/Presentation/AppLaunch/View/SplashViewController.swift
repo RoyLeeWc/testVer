@@ -15,7 +15,7 @@ protocol SplashViewControllerDelegate: AnyObject {
     func successLoad()
 }
 
-class SplashViewController: UIViewController {
+class SplashViewController: UIViewController, SplashViewModelDelegate {
     
     
     private let viewModel: SplashViewModel
@@ -38,8 +38,8 @@ class SplashViewController: UIViewController {
         super.viewDidLoad()
         setupUI()
         bind()
-        
-        viewModel.requestLogin()
+        viewModel.delegate = self
+        viewModel.requestAppVerCheck()
         
     }
     
@@ -62,8 +62,35 @@ class SplashViewController: UIViewController {
                     }
                 }
             }.store(in: &subscriptions)
+        
+        viewModel.$isAppVerCheckProcessOver
+            .receive(on: RunLoop.main)
+            .sink { [weak self] isAppVerCheckProcessOver in
+                if isAppVerCheckProcessOver == true {
+//                    self?.viewModel.requestLogin()
+                    self?.startStartupFlow()
+                }
+            }.store(in: &subscriptions)
     }
     
+    private func startStartupFlow() {
+        // 이미 동의했으면 기존처럼 바로 로그인
+        if !Defaults.isFirstAppLauncher {
+            viewModel.requestLogin()
+            return
+        }
+        // 아직 미동의 → 약관 모달 표시
+        guard let vc = AppContext.container.resolve(SignUpAgreementListViewController.self) else { return }
+        vc.showsChildNavBar = false
+        vc.onAgreementsAccepted = { [weak self] items in
+            // 필수 약관 확인 후 로그인 등 다음 단계
+            Defaults.isFirstAppLauncher = false
+            self?.viewModel.requestLogin()
+        }
+        vc.isModalInPresentation = true
+        present(vc, animated: true)
+    }
+
     private func showNetworkErrorPopup() {
         onMain { [weak self] in
             let popup = LZSnackAlertPopupView(
@@ -173,6 +200,58 @@ class SplashViewController: UIViewController {
     
     func moveToMainPage() {
         
+    }
+    
+    func showRequisiteUpdate(title: String, message: String, downloadURL: String, version: String) {
+        onMain { [weak self] in
+            let popup = LZSnackAlertPopupView(
+                width: 320,
+                height: 222,
+                title: title,
+                message: message,
+                buttonTitle: "업데이트 하기",
+                handler: {
+                    let appStoreURL = URL(string: "itms-apps://itunes.apple.com/app/id<app ID>")!
+
+                    // App Store로 이동
+                    if UIApplication.shared.canOpenURL(appStoreURL) {
+                        UIApplication.shared.open(appStoreURL)
+                    }
+                },
+                showsCloseButton: true,
+                closeHandler: { self?.showRequisiteUpdatePopup() }
+            )
+            popup.show()
+        }
+        showRequisiteUpdatePopup()
+    }
+    
+    func showOptionalUpdate(title: String, message: String, downloadURL: String, version: String) {
+        
+        onMain { [weak self] in
+            let popup = LZSnackAlertPopupView(
+                width: 320,
+                height: 242,
+                title: title,
+                message: message,
+                leftButtonTitle: "다음에 하기",
+                leftHandler: {
+                    self?.delegate?.successLoad()
+                },
+                rightButtonTitle: "업데이트 하기",
+                rightHandler: { [weak self] in
+                    let appStoreURL = URL(string: "itms-apps://itunes.apple.com/app/id<app ID>")!
+
+                    // App Store로 이동
+                    if UIApplication.shared.canOpenURL(appStoreURL) {
+                        UIApplication.shared.open(appStoreURL)
+                    }
+                },
+                showsCloseButton: true,
+                closeHandler: { self?.showOptionalUpdatePopup() }
+            )
+            popup.show()
+        }
     }
     
 }

@@ -15,14 +15,24 @@ final class IAPBottomSheetViewModel {
     }
     
     private let useCase: InAppPurchaseUseCaseProtocol
+    private let productsuseCase: ProductsUseCaseProtocol
+    private let paymentProvidersuseCase: PaymentProvidersUseCaseProtocol
     
-    @Published var coinProductList: [CoinProductEntity]?
-    @Published var memberShipProductList: [MembershipProductEntity]?
+    @Published var coinProductList: [ProductItemEntity] = []
+    @Published var memberShipProductList: [ProductItemEntity] = []
+    // 첫결제 대상 id 집합
+    @Published private(set) var firstPurchaseCoinIds: Set<Int> = []
+    
     @Published var footerTextList: [ShopFooterEntity]?
     @Published var purchaseViewState: PurchaseViewState = .idle
     
-    init(inAppPurchaseUseCase: InAppPurchaseUseCaseProtocol) {
+    init(inAppPurchaseUseCase: InAppPurchaseUseCaseProtocol,
+         productsuseCase: ProductsUseCaseProtocol,
+         paymentProvidersuseCase: PaymentProvidersUseCaseProtocol) {
         self.useCase = inAppPurchaseUseCase
+        self.productsuseCase = productsuseCase
+        self.paymentProvidersuseCase = paymentProvidersuseCase
+       
     }
     
     
@@ -45,17 +55,17 @@ final class IAPBottomSheetViewModel {
     }
     
     func purchaseConsumable(paymentInfo: PaymentInfoDTO) throws {
-        LZSnackConcurrencyManager.run { [weak self] in
-            guard let self = self else { return }
-            self.purchaseViewState = .loading
-            let result = try await useCase.executePurchase(paymentInfo: paymentInfo)
-            switch result {
-            case .success(let entity):
-                self.purchaseViewState = .success(entity)
-            case .failure(let purchaseError):
-                self.purchaseViewState = .failure(purchaseError)
-            }
-        }
+//        LZSnackConcurrencyManager.run { [weak self] in
+//            guard let self = self else { return }
+//            self.purchaseViewState = .loading
+//            let result = try await useCase.executePurchase(paymentInfo: paymentInfo)
+//            switch result {
+//            case .success(let entity):
+//                self.purchaseViewState = .success(entity)
+//            case .failure(let purchaseError):
+//                self.purchaseViewState = .failure(purchaseError)
+//            }
+//        }
     }
     
     
@@ -71,24 +81,52 @@ final class IAPBottomSheetViewModel {
     func purchaseSubscription(paymentInfo: PaymentInfoDTO) throws {
         LZSnackConcurrencyManager.run { [weak self] in
             guard let self = self else { return }
-            try await useCase.executeSubscriptionPurchase(paymentInfo: paymentInfo)
+//            try await useCase.executeSubscriptionPurchase(paymentInfo: paymentInfo)
         }
     }
     
     
-    func fetchCoinProduct() {
+    func fetchProduct() {
         LZSnackConcurrencyManager.run { [weak self] in
-            guard let self = self else { return }
-            self.coinProductList = try await useCase.executeFetchCoinProduct()
+            guard let self else { return }
+            do {
+                
+                let catalog = try await self.productsuseCase.fetchProducts()
+                
+                // 코인(소모형): iOS + ONE_TIME_PURCHASE
+                let coins = catalog?.coinProductCatalogs
+                    .filter { $0.paymentMenuType == .coinProduct }
+                    .flatMap { $0.products }
+                    .filter { $0.isIOSConsumable }
+                
+                // 구독: iOS
+                let subs = catalog?.subscriptionProductCatalogs
+                    .filter { $0.paymentMenuType == .subscriptionProduct }
+                    .flatMap { $0.products }
+                    .filter { $0.platforms.contains("IOS") }
+                
+                self.coinProductList = coins ?? []
+                self.memberShipProductList = subs ?? []
+                
+                let firstType: Set<String> = ["FIRST_CHARGE"].map { $0.uppercased() }.reduce(into: Set<String>()) { $0.insert($1) }
+                
+                let coinFirstIds = catalog?.coinProductCatalogs
+                    .filter { firstType.contains($0.catalogType.uppercased()) }
+                    .flatMap { $0.products.map(\.productId) }
+                self.firstPurchaseCoinIds = Set(coinFirstIds ?? [])
+                
+            } catch {
+                // TODO: 에러 처리
+            }
         }
     }
     
-    func fetchMembershipProduct() {
-        LZSnackConcurrencyManager.run { [weak self] in
-            guard let self = self else { return }
-            self.memberShipProductList = try await useCase.executeFetchMembershipProduct()
-        }
-    }
+//    func fetchMembershipProduct() {
+//        LZSnackConcurrencyManager.run { [weak self] in
+//            guard let self = self else { return }
+//            self.memberShipProductList = try await useCase.executeFetchMembershipProduct()
+//        }
+//    }
     
     
 }

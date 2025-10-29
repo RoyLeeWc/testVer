@@ -19,8 +19,8 @@ final class EpisodeListRepository: EpisodeListRepositoryProtocol {
         let totalCount = 50
         
         for index in 1...totalCount {
-            let contentsID = 1              // 예시로 모두 같은 콘텐츠
-            let episodeID = index
+            let contentsID = ""              // 예시로 모두 같은 콘텐츠
+            let episodeID = ""
             let episodeIndex = index
             let isEarlyAccess = index > totalCount - 10  // 마지막 10개만 얼리 액세스
             let isLocked = Bool.random()                // 랜덤 잠금 여부
@@ -30,7 +30,10 @@ final class EpisodeListRepository: EpisodeListRepositoryProtocol {
                 episodeID: episodeID,
                 episodeIndex: episodeIndex,
                 isLocked: isLocked,
-                isEarlyAccess: isEarlyAccess
+                isEarlyAccess: isEarlyAccess,
+                contentsAlias: "",
+                episodeAlias: ""
+                
             )
             episodes.append(entity)
         }

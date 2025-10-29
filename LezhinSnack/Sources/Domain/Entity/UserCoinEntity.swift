@@ -13,3 +13,4 @@ struct UserCoinEntity: Codable {
     var expiringCoin: Int64
     var expiringWindowDays: Int64
 }
+

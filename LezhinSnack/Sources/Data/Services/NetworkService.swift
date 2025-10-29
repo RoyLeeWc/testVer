@@ -59,6 +59,30 @@ final class NetworkService {
         .eraseToAnyPublisher()
     }
     
+//    func request<T: Decodable>(_ apiRequest: ApiRequestProtocol,
+//                               decoder: JSONDecoder = JSONDecoder()) -> AnyPublisher<T, AFError> {
+//
+//        // 요청 로그
+//        printApiLog(apiLogType: .requestLog, apiRequest)
+//
+//        // 요청 객체 만들어서 재사용
+//        let req = session.request(apiRequest.url,
+//                                  method: apiRequest.method,
+//                                  parameters: apiRequest.parameters,
+//                                  encoding: apiRequest.encoding,
+//                                  headers: apiRequest.headers)
+//
+//        // ✅ 응답 로깅은 Data로
+//        req.responseData { [weak self] res in
+//            self?.logHTTP(apiRequest: apiRequest, request: req, response: res)
+//        }
+//
+//        // 디코딩 스트림
+//        return req.publishDecodable(type: T.self, decoder: decoder)
+//                 .value()
+//                 .eraseToAnyPublisher()
+//    }
+    
     
     func printApiLog(apiLogType: APILogType, _ apiRequest: ApiRequestProtocol, _ result: String? = nil) {
         if apiRequest.isPrintLog {
@@ -74,6 +98,40 @@ final class NetworkService {
             print("\(apiLogType.rawValue) : \n"+printString)
         }
     }
+    
+    private func logHTTP(apiRequest: ApiRequestProtocol,
+                         request: DataRequest,
+                         response: AFDataResponse<Data>) {
+        guard apiRequest.isPrintLog else { return }
+
+        let finalURL   = request.request?.url?.absoluteString ?? apiRequest.url
+        let statusCode = response.response?.statusCode ?? -1
+        let headers    = request.request?.allHTTPHeaderFields ?? [:]
+        let bodyStr    = response.data.flatMap { String(data: $0, encoding: .utf8) } ?? "<no-body>"
+        let errorDesc  = response.error?.localizedDescription ?? "none"
+        let respHeaders = response.response?.allHeaderFields ?? [:]
+        let prettyRespHeaders = prettyResponseHeaders(response.response)
+        // 민감값 마스킹(Authorization 등)
+        let maskedHeaders = headers.mapValues { key -> String in
+            if key.lowercased().contains("authorization") { return "Bearer ****" }
+            return key
+        }
+
+        let printString = """
+        ┌────────────────────────────────────────────────────────────────────────
+        │ ⏰ Final URL   : \(finalURL)
+        │ 📄 Method      : \(apiRequest.method.rawValue)
+        │ 🔢 Status      : \(statusCode)
+        │ 🧾 ReqHeaders  : \(maskedHeaders)
+        │ ⚙️ ReqParams   : \(LZSUtil.parsePrettyDictionary(dictionary: apiRequest.parameters))
+        │ ❌ Error       : \(errorDesc)
+        │ 🔢 RespBody    : \(bodyStr)
+        │ 📨 RespHeaders : \(prettyRespHeaders)
+        └────────────────────────────────────────────────────────────────────────
+        """
+        print("리스폰스 로그 : \n" + printString)
+    }
+    
 }
 
 extension NetworkService {
@@ -95,13 +153,119 @@ extension NetworkService {
                                       encoding: apiRequest.encoding,
                                       headers: apiRequest.headers)
         
-        // 응답 문자열 로그 출력
-        if let responseString = try? await request.serializingString().value {
-            printApiLog(apiLogType: .responseLog, apiRequest, responseString)
+        //        // 응답 문자열 로그 출력
+        //        if let responseString = try? await request.serializingString().value {
+        //            printApiLog(apiLogType: .responseLog, apiRequest, responseString)
+        //        }
+        //
+        //        // 응답 데이터를 디코딩하여 T 타입으로 반환
+        //        let decodedData = try await request.serializingDecodable(T.self, decoder: decoder).value
+        //        return decodedData
+        
+        
+        // Data로 받고 UTF-8로만 로그 출력
+        let data = try await request.serializingData().value
+        let body = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+        printApiLog(apiLogType: .responseLog, apiRequest, body)
+        // 같은 Data로 디코딩
+        return try decoder.decode(T.self, from: data)
+    }
+    
+    /// 디코딩 결과 + HTTPURLResponse(헤더 접근용) 동시 반환
+    func requestAsyncWithResponse<T: Decodable>(_ apiRequest: ApiRequestProtocol,decoder: JSONDecoder = JSONDecoder()) async throws -> (T, HTTPURLResponse?, Data) {
+        // 로그
+        printApiLog(apiLogType: .requestLog, apiRequest)
+        
+        if apiRequest.isUseAccessToken == true && !TokenService.shared.isAccessTokenValid() {
+            let ok = await TokenService.shared.refreshAccessToken()
+            if !ok { throw NSError(domain: "AuthError", code: -1) }
         }
         
-        // 응답 데이터를 디코딩하여 T 타입으로 반환
-        let decodedData = try await request.serializingDecodable(T.self, decoder: decoder).value
-        return decodedData
+        let req = session.request(apiRequest.url,
+                                  method: apiRequest.method,
+                                  parameters: apiRequest.parameters,
+                                  encoding: apiRequest.encoding,
+                                  headers: apiRequest.headers)
+        
+        let res = await req.serializingData().response
+        logHTTP(apiRequest: apiRequest, request: req, response: res)
+        
+        let data = res.data ?? Data()
+        let body = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+        printApiLog(apiLogType: .responseLog, apiRequest, body)
+        
+        let decoded = try decoder.decode(T.self, from: data)
+        return (decoded, res.response, data)
     }
+    
+    private func prettyResponseHeaders(_ httpResponse: HTTPURLResponse?) -> String {
+        guard let httpResponse = httpResponse else { return "<no-headers>" }
+        
+        // AnyHashable → [String: Any] 로 정규화
+        var dict: [String: Any] = [:]
+        
+        httpResponse.allHeaderFields.forEach { k, v in
+            dict[String(describing: k)] = String(describing: v)
+        }
+        // 필요 시 마스킹 (Authorization 등). Set-Cookie는 디버깅 위해 그대로 둠.
+        var masked = dict
+        for (k, v) in dict {
+            if k.lowercased() == "authorization" {
+                masked[k] = "Bearer ****"
+            }
+        }
+        return LZSUtil.parsePrettyDictionary(dictionary: masked)
+    }
+
+    private func printResponseHeadersLog(apiLogType: APILogType,
+                                         _ apiRequest: ApiRequestProtocol,
+                                         _ httpResponse: HTTPURLResponse?) {
+        guard apiRequest.isPrintLog else { return }
+        let headers = prettyResponseHeaders(httpResponse)
+        let status  = httpResponse?.statusCode ?? -1
+        let url     = httpResponse?.url?.absoluteString ?? apiRequest.url
+        let block = """
+        ┌────────────────────────────────────────────────────────────────────────────────────────
+        │ ⏰ Final URL   : \(url)
+        │ 🔢 Status      : \(status)
+        │ 📨 RespHeaders : \(headers)
+        └────────────────────────────────────────────────────────────────────────────────────────
+        """
+        print("리스폰스 헤더 : \n" + block)
+    }
+
+    
+//    func requestAsync<T: Decodable>(_ apiRequest: ApiRequestProtocol,
+//                                    decoder: JSONDecoder = JSONDecoder()) async throws -> T {
+//        // 요청 로그
+//        printApiLog(apiLogType: .requestLog, apiRequest)
+//
+//        // 토큰 확인/갱신
+//        if apiRequest.isUseAccessToken == true && !TokenService.shared.isAccessTokenValid() {
+//            let ok = await TokenService.shared.refreshAccessToken()
+//            if !ok { throw NSError(domain: "AuthError", code: -1) }
+//        }
+//
+//        // 요청 생성
+//        let req = session.request(apiRequest.url,
+//                                  method: apiRequest.method,
+//                                  parameters: apiRequest.parameters,
+//                                  encoding: apiRequest.encoding,
+//                                  headers: apiRequest.headers)
+//
+//        // ✅ Data 응답 확보 + 로깅
+//        let res = await req.serializingData().response
+//        logHTTP(apiRequest: apiRequest, request: req, response: res)
+//
+//        // ✅ 직접 디코딩
+//        let data = res.data ?? Data()
+//        do {
+//            return try decoder.decode(T.self, from: data)
+//        } catch {
+//            if apiRequest.isPrintLog {
+//                print("❗️Decode failed: \(error)\nRawBody:\n\(LZSUtil.prettyJSONString(data: data))")
+//            }
+//            throw error
+//        }
+//    }
 }

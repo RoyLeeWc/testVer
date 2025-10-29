@@ -6,8 +6,7 @@
 //
 
 protocol UserUseCaseProtocol {
-    func executeFetchUserCoinBalance() async throws -> UserCoinEntity
-    func executeUpdateUserNickname() async throws
+    func executeFetchUserCoin() async throws -> UserCoinEntity
 }
 
 
@@ -19,12 +18,8 @@ struct UserUseCase: UserUseCaseProtocol {
         self.repository = userRepositoryProtocol
     }
     
-    func executeFetchUserCoinBalance() async throws -> UserCoinEntity {
-        return try await repository.fetchUserCoinBalance()
-    }
-    
-    func executeUpdateUserNickname() async throws {
-        
+    func executeFetchUserCoin() async throws -> UserCoinEntity {
+        return try await repository.fetchUserCoin()
     }
     
 }

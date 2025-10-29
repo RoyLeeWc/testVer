@@ -27,16 +27,24 @@ final class PurchasedContentCell: UICollectionViewCell {
     
     private var progressHeightConstraint: Constraint?
     
-    override var isSelected: Bool {
-        didSet {
-            if isSelected {
-                contentView.alpha = 1.0
-                checkBox.setState(.checked)
-            } else {
-                contentView.alpha = 0.3
-                checkBox.setState(.unchecked)
-            }
+    private func syncSelectionUI() {
+        if isEditingMode {
+            checkBox.setState(isSelected ? .checked : .unchecked)
+            thumbnailImageView.alpha = isSelected ? 1.0 : 0.3
+        } else {
+            checkBox.setState(.unchecked)
+            thumbnailImageView.alpha = 1.0      // 일반 모드: 항상 진하게
         }
+    }
+    
+    override var isSelected: Bool {
+        didSet { syncSelectionUI() }
+    }
+    
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        isSelected = false
+        syncSelectionUI()
     }
     
     private let thumbnailImageView: UIImageView = {
@@ -50,14 +58,14 @@ final class PurchasedContentCell: UICollectionViewCell {
         let label = UILabel()
         label.font = .pretendardMedium(size: 18)
         label.textColor = .white
-        label.numberOfLines = 0
+        label.numberOfLines = 1
         return label
     }()
     
     private let episodeInfoLabel: UILabel = {
         let label = UILabel()
         label.font = .pretendardRegular(size: 14)
-        label.textColor = .white
+        label.textColor = UIColor(.foregroundSubtler)
         label.numberOfLines = 0
         return label
     }()
@@ -88,7 +96,7 @@ final class PurchasedContentCell: UICollectionViewCell {
         progressHeightConstraint?.update(offset: height)
         
         // 셀 dimming
-        contentView.alpha = isEditingMode
+        thumbnailImageView.alpha = isEditingMode
         ? (isSelected ? 1.0 : 0.3)
         : 1.0
         
@@ -118,7 +126,7 @@ final class PurchasedContentCell: UICollectionViewCell {
         titleLabel.snp.makeConstraints { make in
             make.top.equalToSuperview().offset(12)
             make.leading.equalTo(thumbnailImageView.snp.trailing).offset(16)
-            make.trailing.equalTo(checkBox.snp.leading).offset(12)
+            make.trailing.equalTo(checkBox.snp.leading).offset(0)
         }
         
         contentView.addSubview(episodeInfoLabel)
@@ -138,11 +146,19 @@ final class PurchasedContentCell: UICollectionViewCell {
         
     }
     
-    func configure(with entity: PurchasedContentEntity) {
+    func configure(with entity: PurchasedContentItemEntity) {
         titleLabel.text = entity.title
-        thumbnailImageView.image = UIImage(named: entity.thumbnailIUrl)
-        episodeInfoLabel.text = "\(entity.watchedEpisode)회 / \(entity.totalEpisodeCount)회"
-        watchedDateLabel.text = entity.watchedDate
+        thumbnailImageView.kf.setImage(with: URL(string: entity.thumbnailUrl))
+        
+        let lastepisodeNumber = String(entity.purchasedEpisodeCount)
+        episodeInfoLabel.text = "\(lastepisodeNumber)개 회차"
+        
+        
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy.MM.dd"
+        let watchedDate = dateFormatter.string(from: entity.lastPurchasedAt)
+        watchedDateLabel.text = watchedDate
+        
     }
 }
 

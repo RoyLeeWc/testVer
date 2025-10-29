@@ -8,6 +8,7 @@
 
 import UIKit
 import SnapKit
+import Foundation
 
 final class RechargeCell: UICollectionViewCell {
     
@@ -67,28 +68,21 @@ final class RechargeCell: UICollectionViewCell {
     }
     
     private func setupUI() {
-        
-        
-        contentView.addSubview(expiredLabel)
-        expiredLabel.snp.makeConstraints { make in
-            make.top.equalToSuperview().offset(16)
-            make.leading.equalToSuperview().offset(16)
-            expiredHeightConstraint = make.height.equalTo(20).constraint
-        }
-        
         contentView.addSubview(titleLabel)
         contentView.addSubview(coinPlusMinusLabel)
         contentView.addSubview(coinView)
+        contentView.addSubview(dateLabel)
+        contentView.addSubview(expiredLabel)
         
         titleLabel.snp.makeConstraints { make in
-            make.top.equalTo(expiredLabel.snp.bottom)
+            make.top.equalToSuperview().offset(16)
             make.leading.equalToSuperview().offset(16)
             make.trailing.lessThanOrEqualTo(coinPlusMinusLabel.snp.leading).offset(-8)
         }
         
         coinPlusMinusLabel.snp.makeConstraints { make in
             make.centerY.equalTo(titleLabel)
-            make.trailing.equalTo(coinView.snp.leading).offset(2)
+            make.trailing.equalTo(coinView.snp.leading).offset(-2)
             make.width.equalTo(11)
         }
         
@@ -98,31 +92,77 @@ final class RechargeCell: UICollectionViewCell {
             make.height.equalTo(22)
         }
         
-        contentView.addSubview(dateLabel)
         dateLabel.snp.makeConstraints { make in
             make.top.equalTo(titleLabel.snp.bottom).offset(4)
             make.leading.equalToSuperview().offset(16)
             make.bottom.equalToSuperview().inset(16)
         }
         
-    }
-    
-    func configure(_ item: CoinChargeHistoryEntity) {
-        // 텍스트 세팅
-        titleLabel.text = item.title
-        
-        let randomBool = Bool.random()
-        
-        if randomBool {
-            expiredLabel.text = "기만만료"
-            coinPlusMinusLabel.text = "+"
-        } else {
-            expiredLabel.text = ""
-            coinPlusMinusLabel.text = "-"
+        expiredLabel.snp.makeConstraints { make in
+            expiredHeightConstraint = make.height.equalTo(20).constraint
+            make.centerY.equalTo(dateLabel)
+            make.trailing.equalToSuperview().offset(-16)
         }
         
-        dateLabel.text = "2025.04.29"
-        coinView.setCoinText("1000")
+        
+        
+    }
+    
+//    // RechargeCell
+//    func configure(_ item: CoinChargeEntity) {
+//        titleLabel.text = item.title
+//        // 충전 내역이므로 항상 "+"로 노출(혹은 item.coinType/coinTitleType 로직대로)
+//        coinPlusMinusLabel.text = "+"
+//        coinView.setCoinText("\(item.initialAmount)")
+//        dateLabel.text = DateFormatter.yyMMddDot(fromMillis: item.createdAt)
+//
+//        // 만료 라벨: 만료일이 있으면 표시, 없으면 숨김
+//        if item.expiredAt > 0 {
+//            expiredLabel.text = "만료 \(DateFormatter.yyMMddDot(fromMillis: item.expiredAt))"
+//        } else {
+//            expiredLabel.text = ""
+//        }
+//        expiredHeightConstraint.update(offset: (expiredLabel.text?.isEmpty ?? true) ? 0 : 20)
+//    }
+    
+    
+//    titleLabel.text = item.title
+//       coinPlusMinusLabel.text = "-" // 사용내역은 차감
+//       coinView.setCoinText("\(item.coin)")
+//       dateLabel.text = DateFormatter.yyMMddDot(fromMillis: item.createdAt)
+//       expiredLabel.text = "" // 사용내역엔 만료 라벨 X
+//       expiredHeightConstraint.update(offset: 0)
+    
+    
+    func configure(_ item: CoinChargeEntity) {
+        // 텍스트 세팅
+        titleLabel.text = item.title
+
+        // 서버 타임스탬프가 ms 기준이라면 초단위 변환
+        let createdAt  = Double(item.createdAt)
+        let expiredAt = Double(item.expiredAt)
+        
+        
+        let createdAtData = Date(timeIntervalSince1970: createdAt / 1000)
+        let expiredAtData = Date(timeIntervalSince1970: expiredAt / 1000)
+        
+        let now = LZSUtil.getCurrentTimeDate()
+        
+        if now > expiredAtData {
+            expiredLabel.text = "기간만료"
+            coinPlusMinusLabel.text = "-"
+        } else {
+            expiredLabel.text = ""
+            coinPlusMinusLabel.text = "+"
+        }
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy.MM.dd"
+        let watchedDate = dateFormatter.string(from: createdAtData)
+        
+        dateLabel.text = watchedDate
+        coinView.setCoinText(String(item.remainAmount))
+//        coinView.setCoinText("1000")
 
         // 높이 조절: 텍스트가 nil 또는 빈 문자열이면 0, 아니면 20
         let newHeight = (expiredLabel.text?.isEmpty ?? true) ? 0 : 20

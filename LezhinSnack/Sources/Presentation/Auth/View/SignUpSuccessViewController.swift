@@ -21,7 +21,8 @@ final class SignUpSuccessViewController: UIViewController, ChildRightCloseNaviga
         label.textColor = UIColor(.white)
         label.textAlignment = .center
         label.numberOfLines = 0
-        label.text = "회원가입_환영_메인문구".localized
+//        label.text = "회원가입_환영_메인문구".localized
+        label.text = "다양한 스낵 맛볼 준비 완료!"
         return label
     }()
     
@@ -31,7 +32,8 @@ final class SignUpSuccessViewController: UIViewController, ChildRightCloseNaviga
         label.textColor = UIColor(.foregroundSubtler)
         label.textAlignment = .center
         label.numberOfLines = 0
-        label.text = "회원가입_환영_서브문구".localized
+//        label.text = "회원가입_환영_서브문구".localized
+        label.text = "선물 받은 200코인으로 지금 바로\n첫 감상을 시작하세요!"
         return label
     }()
     
@@ -53,7 +55,8 @@ final class SignUpSuccessViewController: UIViewController, ChildRightCloseNaviga
     
     private var topButton: UIButton = {
         let floatingActionButton = UIButton(type: .system)
-        floatingActionButton.setTitle("회원가입완료_첫충전_버튼타이틀".localized(), for: .normal)
+//        floatingActionButton.setTitle("회원가입완료_첫충전_버튼타이틀".localized(), for: .normal)
+        floatingActionButton.setTitle("첫 충전 혜택받기", for: .normal)
         floatingActionButton.titleLabel?.font = .pretendardSemiBold(size: 16)
         floatingActionButton.backgroundColor = UIColor(.fillBrand)
         floatingActionButton.tintColor = UIColor(.white)
@@ -64,10 +67,11 @@ final class SignUpSuccessViewController: UIViewController, ChildRightCloseNaviga
     
     private var bottomButton: UIButton = {
         let floatingActionButton = UIButton(type: .system)
-        floatingActionButton.setTitle("회원가입완료_작품탐색_버튼타이틀".localized(), for: .normal)
+//        floatingActionButton.setTitle("회원가입완료_작품탐색_버튼타이틀".localized(), for: .normal)
+        floatingActionButton.setTitle("작품 탐색하기", for: .normal)
         floatingActionButton.titleLabel?.font = .pretendardSemiBold(size: 16)
         floatingActionButton.backgroundColor = .clear
-        floatingActionButton.tintColor = UIColor(.foregroundInverse)
+        floatingActionButton.tintColor = UIColor(.white)
         floatingActionButton.layer.cornerRadius = 6
         
         return floatingActionButton
@@ -83,6 +87,41 @@ final class SignUpSuccessViewController: UIViewController, ChildRightCloseNaviga
         setupChildNavigationBar()
         childNavigationBar.titleLabel.text = ""
         childNavigationBar.delegate = self
+        
+        let coins = 200
+        let text = "선물 받은 \(coins)코인으로 지금 바로\n첫 감상을 시작하세요!"
+        let highlight = "\(coins)코인"
+
+//        label.font = .pretendardMedium(size: 18)
+//        label.textColor = UIColor(.foregroundSubtler)
+//        label.textAlignment = .center
+        
+        //  폰트
+        let font = UIFont.pretendardMedium(size: 18)
+        // 기본 속성
+        let attr = NSMutableAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .foregroundColor: UIColor(.foregroundSubtler)
+            ]
+        )
+        // 하이라이트 적용
+        if let range = text.range(of: highlight) {
+            attr.addAttributes(
+                [
+                    .foregroundColor: UIColor(.brandRed),          // 원하는 색
+                    .font: font 
+                ],
+                range: NSRange(range, in: text)
+            )
+        }
+
+        welcomeSubTitleLabel.attributedText = attr
+        welcomeSubTitleLabel.textAlignment = .center   // 가운데 정렬 유지
+        welcomeSubTitleLabel.numberOfLines = 0
+        
+        
         self.navigationController?.interactivePopGestureRecognizer?.delegate = self
         view.backgroundColor = UIColor(.backgroundDefault)
         
@@ -162,7 +201,8 @@ final class SignUpSuccessViewController: UIViewController, ChildRightCloseNaviga
 extension SignUpSuccessViewController: ChildRightCloseNavigationBarDelegate {
     
     func childNavigationBarDidTapClose(_ navigationBar: ChildRightCloseNavigationBar) {
-        navigationController?.popViewController(animated: true)
+//        navigationController?.popViewController(animated: true)
+        navigationController?.popToRootViewController(animated: true)
     }
     
 }

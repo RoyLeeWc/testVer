@@ -194,3 +194,37 @@ final class LZSnackMarkView: UIView {
         }
     }
 }
+
+extension LZSnackMarkType {
+    /// BadgeEntity 바로 받기
+    init?(badge: BadgeEntity) {
+        self.init(badgeType: badge.type.rawValue)
+    }
+    /// BadgeType 바로 받기
+    init?(badgeType: BadgeType) {
+        self.init(badgeType: badgeType.rawValue)
+    }
+    /// 서버 badgeType 문자열을 UI 마크 타입으로 변환
+    init?(badgeType: String) {
+        switch badgeType.uppercased() {
+        case "LEZHIN_ORIGINAL":
+            self = .lezhinIPIcons
+        case "BOMTOON_ORIGINAL":
+            self = .bomtoonIPIcons
+        case "GENERAL_ORIGINAL":
+            self = .originalIcons
+        case "TOP_10_ENTRY":
+            self = .ranking
+        case "RISING_POPULARITY":
+            self = .popularBest
+        case "NEW_RELEASE":
+            self = .newWork
+        case "LIKE_BEST":
+            self = .wishBest
+        case "FAVORITE_BEST":
+            self = .favoriteBest
+        default:
+            return nil
+        }
+    }
+}

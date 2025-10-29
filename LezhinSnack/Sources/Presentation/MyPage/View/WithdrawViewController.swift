@@ -22,6 +22,9 @@ final class WithdrawViewController: UIViewController, ChildNavigationBarPresenta
     
     private let viewModel: WithdrawViewModel
     
+    private var reasons: [WithdrawalReasonEntity] = []
+    private var selectedReasonId: Int?
+    
     init?(viewModel: WithdrawViewModel) {
         self.viewModel = viewModel
         super.init(nibName: nil, bundle: nil)
@@ -150,6 +153,8 @@ final class WithdrawViewController: UIViewController, ChildNavigationBarPresenta
         super.viewDidLoad()
         setupUI()
         bind()
+        fetchData()
+        
     }
     
     override func viewWillAppear(_ animated: Bool) {
@@ -240,6 +245,55 @@ final class WithdrawViewController: UIViewController, ChildNavigationBarPresenta
                 }
             }
             .store(in: &subscriptions)
+        
+        // 탈퇴 사유 목록 바인딩
+        viewModel.$reasons
+            .receive(on: RunLoop.main)
+            .sink { [weak self] list in
+                guard let self = self else { return }
+                self.reasons = list
+                // 탈퇴사유 데이터소스 = title 배열
+                self.withdrawReasonDropDown.dataSource = list.map { $0.title }
+            }
+            .store(in: &subscriptions)
+        
+        viewModel.$isWithdrawing
+            .receive(on: RunLoop.main)
+            .sink { [weak self] loading in
+                // 로딩 인디케이터/버튼 비활성 등
+                self?.floatingActionButton.isEnabled = !loading
+            }
+            .store(in: &subscriptions)
+        
+        viewModel.$withdrawSuccess
+            .compactMap { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] ok in
+                guard let self, ok else { return }
+                // 성공 화면 이동
+                guard let vc = AppContext.container.resolve(WithdrawResultViewController.self) else { return }
+                self.navigationController?.pushHidesBottomBarViewController(vc)
+            }
+            .store(in: &subscriptions)
+        
+        viewModel.$withdrawError
+            .compactMap { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] msg in
+                guard let self else { return }
+                LZSnackToastHelper.showOnce(on: self.view, toast: LZSnackToastView(text: msg), duration: 2.0)
+            }
+            .store(in: &subscriptions)
+        
+        viewModel.$subscriptionError
+            .compactMap { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] msg in
+                guard let self else { return }
+                LZSnackToastHelper.showOnce(on: self.view, toast: LZSnackToastView(text: msg), duration: 2.0)
+            }
+            .store(in: &subscriptions)
+        
     }
     
     // MARK: - Setup UI
@@ -379,50 +433,74 @@ final class WithdrawViewController: UIViewController, ChildNavigationBarPresenta
         
         floatingActionButton.addTarget(self, action: #selector(withdrawButtonTapped), for: .touchUpInside)
     }
-    
+    private func fetchData() {
+        viewModel.fetchWithdrawalReasons()
+        viewModel.checkSubscription()
+    }
     
     @objc func withdrawButtonTapped() {
-        let isAbleWithdraw: Bool = floatingActionButton.backgroundColor != UIColor(.fillDisabled)
-        if isAbleWithdraw {
+        let isAbleWithdraw = floatingActionButton.backgroundColor != UIColor(.fillDisabled)
+        guard isAbleWithdraw else { return }
+        
+        // 구독 여부 기반 분기
+        let isActive = viewModel.hasActiveSubscription ?? false
+        
+        if isActive {
+            // ✅ 구독 중 → 해지 안내 팝업
             onMain { [weak self] in
+                guard let self else { return }
                 let popup = LZSnackAlertPopupView(
-                    width: 320,
-                    height: 222,
+                    width: 320, height: 222,
                     title: "구독 서비스를 해지하시겠어요?",
                     message: "정기 구독 서비스를 이용 중일 경우 구독 해지 후 탈퇴하실 수 있습니다.",
                     leftButtonTitle: "취소",
                     leftHandler: { },
                     rightButtonTitle: "해지하기",
                     rightHandler: { [weak self] in
-                        self?.viewModel.requestLogout()
+                        // 원하는 해지 경로로 이동(앱스토어 구독설정, 멤버십 화면 등)
+                        self?.openAppStoreSubscriptions()
                     }
                 )
                 popup.show()
             }
+        } else {
+            // ✅ 미구독 → 기존 탈퇴 흐름 그대로
+            let reasonText = self.isSelectedOther() ? self.withdrawInputTextView.text : ""
+            self.viewModel.requestWithdrawal(
+                selectedReasonId: self.selectedReasonId,
+                reasonText: reasonText
+            )
         }
     }
+    
     
     @objc private func dismissKeyboard() {
         view.endEditing(true)
     }
     
+    // 필요 시 앱스토어 구독설정 오픈
+    private func openAppStoreSubscriptions() {
+        guard let url = URL(string: "https://apps.apple.com/account/subscriptions") else { return }
+        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+    }
+
+    
     // MARK: - Configure DropDown
     private func configureDropDown() {
         withdrawReasonDropDown.anchorView = withdrawSelectBoxContainer
-        withdrawReasonDropDown.dataSource = ["컨텐츠 부족",
-                                             "서비스 이용방법이 어려움",
-                                             "다른 웹툰 서비스의 비용이 더 저렴해서",
-                                             "아이디 변경 / 재가입을 하기위해",
-                                             "웹툰 중독으로 인한 학습 및 업무능력의 하락",
-                                             "기타"]
-        // Selection handler
+        // selectionAction에서 id를 매핑
         withdrawReasonDropDown.selectionAction = { [weak self] index, title in
             guard let self = self else { return }
-            print("Selected item: \(title) at index: \(index)")
-            self.withdrawPlaceholderLabel.text = title
+            guard self.reasons.indices.contains(index) else { return }
+            let item = self.reasons[index]
+            
+            self.selectedReasonId = item.withdrawalCategoryId
+            self.withdrawPlaceholderLabel.text = item.title
             self.withdrawReasonDropDown.dismiss()
+            
             self.updateFloatingActionButtonState()
         }
+        
     }
     
     private func configureAllText() {
@@ -519,28 +597,27 @@ extension WithdrawViewController: UITextViewDelegate {
         }
         updateFloatingActionButtonState()
     }
-    
+    // “기타” 선택 여부 판단
+    private func isSelectedOther() -> Bool {
+        guard let id = selectedReasonId,
+              let item = reasons.first(where: { $0.withdrawalCategoryId == id }) else { return false }
+        let t = item.title.trimmingCharacters(in: .whitespaces)
+        return t == "기타" || t.lowercased() == "other"
+    }
     
     private func updateFloatingActionButtonState() {
-        let selectedTitle = withdrawPlaceholderLabel.text ?? ""
-        let isPlaceholder = (selectedTitle == "선택하세요")
-        let isOther = (selectedTitle == "기타")
-        let isChecked = isCheckBoxSelected
-
-        // 1) placeholder 상태면 무조건 비활성
-        guard !isPlaceholder else {
+        // placeholder 여부 → selectedReasonId nil 여부로 대체
+        guard let _ = selectedReasonId else {
             configureFloatingActionButton(isEnable: false)
             return
         }
-
-        // 2) 기타 선택 시: 글자수 > 10 & 체크박스 체크
-        if isOther {
+        let isChecked = isCheckBoxSelected
+        
+        if isSelectedOther() {
             let hasValidInput = withdrawInputTextView.textColor != UIColor(.foregroundSubtler)
-                             && withdrawInputTextView.text.count > 10
+            && withdrawInputTextView.text.count > 10
             configureFloatingActionButton(isEnable: isChecked && hasValidInput)
-        }
-        // 3) 기타 외 선택 시: 체크박스 체크만으로 활성
-        else {
+        } else {
             configureFloatingActionButton(isEnable: isChecked)
         }
     }

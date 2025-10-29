@@ -47,18 +47,24 @@ extension DefaultsKeys {
     // 토큰만료 계산을 위한 서버시간과의 offset
     var serverTimeOffset: DefaultsKey<TimeInterval> { .init("serverTimeOffset", defaultValue: 0) }
     
+    /// 앱 첫구동 여부
+    var isFirstAppLauncher: DefaultsKey<Bool> { .init("isFirstAppLauncher", defaultValue: true) }
     
     /// 인앱결재 - 마지막 트랜잭션 ID
     var transactionId: DefaultsKey<String> { .init("transactionId", defaultValue: "") }
     
     // 로그인 ( Auth )
     var guestModeId: DefaultsKey<String> { .init("guestModeId", defaultValue: "") }
-    var userId: DefaultsKey<String> { .init("userId", defaultValue: "") }
+    var isGuestSignUpStatus: DefaultsKey<Bool> { .init("isGuestSignUpStatus", defaultValue: false) }
+    
+    var userId: DefaultsKey<Int> { .init("userId", defaultValue: 0) }
     var snsId: DefaultsKey<String> { .init("snsId", defaultValue: "") }
     var userEmail: DefaultsKey<String> { .init("userEmail", defaultValue: "") }
     var userName: DefaultsKey<String> { .init("userName", defaultValue: "") }
-    var userLoginType: DefaultsKey<String> { .init("userLoginType", defaultValue: SnsLoginType.guestMode.rawValue) }
+    var userLoginType: DefaultsKey<String> { .init("userLoginType", defaultValue: AuthProvider.IOS_GUEST.rawValue) }
     
+    var isAgreeMarketing: DefaultsKey<Bool> { .init("isAgreeMarketing", defaultValue: false) }
+    var isAgreePushNotification: DefaultsKey<Bool> { .init("isAgreePushNotification", defaultValue: false) }
     var lastLoginType: DefaultsKey<String?> { .init("userLastLoginType", defaultValue: nil )}
     
 }

@@ -27,16 +27,24 @@ final class HistoryCell: UICollectionViewCell {
     
     private var progressHeightConstraint: Constraint?
     
-    override var isSelected: Bool {
-        didSet {
-            if isSelected {
-                contentView.alpha = 1.0
-                checkBox.setState(.checked)
-            } else {
-                contentView.alpha = 0.3
-                checkBox.setState(.unchecked)
-            }
+    private func syncSelectionUI() {
+        if isEditingMode {
+            checkBox.setState(isSelected ? .checked : .unchecked)
+            thumbnailImageView.alpha = isSelected ? 1.0 : 0.3
+        } else {
+            checkBox.setState(.unchecked)
+            thumbnailImageView.alpha = 1.0      // 일반 모드: 항상 진하게
         }
+    }
+    
+    override var isSelected: Bool {
+        didSet { syncSelectionUI() }
+    }
+    
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        isSelected = false
+        syncSelectionUI()
     }
     
     private let thumbnailImageView: UIImageView = {
@@ -50,7 +58,7 @@ final class HistoryCell: UICollectionViewCell {
         let label = UILabel()
         label.font = .pretendardMedium(size: 18)
         label.textColor = .white
-        label.numberOfLines = 0
+        label.numberOfLines = 1
         return label
     }()
     
@@ -95,9 +103,7 @@ final class HistoryCell: UICollectionViewCell {
         progressHeightConstraint?.update(offset: height)
 
         // 셀 dimming
-        contentView.alpha = isEditingMode
-            ? (isSelected ? 1.0 : 0.3)
-            : 1.0
+        thumbnailImageView.alpha = isEditingMode ? (isSelected ? 1.0 : 0.3) : 1.0
 
         // 즉시 레이아웃 반영
         contentView.layoutIfNeeded()
@@ -154,19 +160,52 @@ final class HistoryCell: UICollectionViewCell {
         
     }
     
-    func configure(with entity: WatchHistoryEntity) {
-        thumbnailImageView.image = UIImage(named: entity.thumbnailIUrl )
+    func configure(with entity: LastViewedContentItemEntity) {
+        thumbnailImageView.kf.setImage(with: URL(string: entity.thumbnailUrl))
         titleLabel.text = entity.title
-        episodeInfoLabel.text = "\(entity.watchedEpisode)회 / \(entity.totalEpisodeCount)회"
-        watchedDateLabel.text = entity.watchedDate
-        progressView.setProgress(entity.viewingRate, animated: false)
+        let lastviewedEpisodeNumber = String(entity.lastViewedEpisodeNumber)
+        let lastepisodeNumber = String(entity.lastEpisodeNumber)
+        
+        // 분리한 텍스트 요소
+        let firstPart = "\(lastviewedEpisodeNumber)회"      // "1화"
+        let secondPart = "\(lastepisodeNumber)회"       // "82화"
+
+        let resultAttributedText = NSMutableAttributedString()
+        let firstAttributed = NSAttributedString(string: firstPart, attributes: [.foregroundColor: UIColor.white])
+        resultAttributedText.append(firstAttributed)
+        let secondAttributed = NSAttributedString(string: " / " + secondPart, attributes: [.foregroundColor: UIColor(.foregroundSubtler)])
+        resultAttributedText.append(secondAttributed)
+        
+        episodeInfoLabel.attributedText = resultAttributedText
+        
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy.MM.dd"
+        let watchedDate = dateFormatter.string(from: entity.lastViewedAt)
+        watchedDateLabel.text = watchedDate
+        
+        let progressValue: Float = episodeProgress(lastViewedEpisodeNumber: entity.lastViewedEpisodeNumber, lastEpisodeNumber: entity.lastEpisodeNumber)
+        progressView.setProgress(progressValue, animated: false)
+        
     }
     
-    func updateRandomProgress() {
-        // 0.0부터 1.0 사이의 랜덤 Float 값 생성
-        let randomProgress = Float.random(in: 0...1)
-        
-        // progressView의 progress를 애니메이션과 함께 업데이트
-        progressView.setProgress(randomProgress, animated: false)
+    func episodeProgress(lastViewedEpisodeNumber: Int?, lastEpisodeNumber: Int?) -> Float {
+        guard var last = lastEpisodeNumber, var current = lastViewedEpisodeNumber else { return 0 }
+        // 음수 방지
+        last = max(0, last)
+        current = max(0, current)
+
+        // 0-based/1-based 추론: 값 중 하나라도 0이면 0부터 시작한다고 가정
+        let first = (last == 0 || current == 0) ? 0 : 1
+
+        // 전체 회차 수 (= first...last 포함 개수)
+        let totalCount = last - first + 1
+        guard totalCount > 0 else { return 0 }
+
+        // 현재 시청 회차를 first...last 범위로 클램프
+        let clampedCurrent = min(max(current, first), last)
+
+        // '본 회차 수'(첫 회차도 1로 계산) / '전체 회차 수'
+        let watchedCount = clampedCurrent - first + 1
+        return Float(watchedCount) / Float(totalCount)
     }
 }

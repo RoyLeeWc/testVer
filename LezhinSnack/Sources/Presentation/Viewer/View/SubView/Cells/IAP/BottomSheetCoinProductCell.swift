@@ -101,13 +101,13 @@ final class BottomSheetCoinProductCell: UICollectionViewCell {
     }
     
     
-    func configure(with entity: CoinProductEntity ) {
+    func configure(with entity: ProductItemEntity,isFirstPurchase: Bool) {
         
-        let originalPriceInt = Int(entity.originalPrice)
-        let discountInt = Int(entity.salePrice)
-        let salePersentageInt = Int(entity.salePersentage)
+        let originalPriceInt = entity.effectivePrice
+        let discountInt = entity.price
+        let salePersentageInt = entity.discountPercentInt
         
-        coinView.setCoinText(entity.coinValue)
+        coinView.setCoinText(entity.coinText)
         coinPricelabel.text = "충전소_가격기호".localized(with: originalPriceInt)
         
         let priceString = "충전소_가격기호".localized(with: discountInt)
@@ -127,7 +127,7 @@ final class BottomSheetCoinProductCell: UICollectionViewCell {
         )
         coinDiscountLabel.attributedText = attributedString
         
-        if entity.isFirstPurchase {
+        if isFirstPurchase {
             coinSalePercentageLabel.text = "\("충전소_코인충전_첫충전할인".localized(with: salePersentageInt))%"
         } else {
             coinSalePercentageLabel.text = "\(salePersentageInt)%"

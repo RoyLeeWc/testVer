@@ -107,10 +107,11 @@ final class UsageCell: UICollectionViewCell {
         
     }
     
-    func configure(_ item: PurchaseHistoryEntity) {
+    func configure(_ item: CoinUsageEntity) {
         // 텍스트 세팅
         titleLabel.text = item.title
         
+
         let randomBool = Bool.random()
         
         if randomBool {

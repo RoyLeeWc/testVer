@@ -7,102 +7,150 @@
 
 import Foundation
 import SwiftyUserDefaults
+import UIKit
+
+enum AuthRepositoryError: Error {
+    case api(code: String, message: String)
+}
 
 protocol AuthRepositoryProtocol {
     func loginGuest(parameters: [String: Any]) async throws -> AuthEntity
-    func loginWithSavedData(parameters: [String: Any]) async throws -> AuthEntity
-    func logoutAndLoginGuestMode(logoutParameters: [String: Any],guestModeParameters: [String: Any]) async throws -> AuthEntity
-    func login(parameters: [String: Any]) async throws -> AuthEntity
     func fetchAgreement() async throws -> [AgreementEntity]
+    func welcomeFetchAgreement() async throws -> [AgreementEntity]
+    
+    ///--------------
+    func snackLogin(provider: AuthProvider, email: String, token: String,
+                    deviceId: String, deviceModel: String, pid: String, isGuest: Bool) async throws -> AuthEntity
+    func snackSignup(provider: AuthProvider,
+                   email: String?,
+                   token: String,
+                   deviceId: String,
+                   deviceModel: String,
+                   pid: String,
+                   isGuest: Bool?,
+                   isAgreeMarketing: Bool,
+                   isAgreePushNotification: Bool,
+                   guestId: String?) async throws -> AuthJoinDataDTO
+    
+    func snackLogout(refreshToken: String) async throws
 }
 
 class AuthRepository: AuthRepositoryProtocol {
     
-    
-    func login(parameters: [String: Any]) async throws -> AuthEntity {
-        let loginAPIRequest = SnsLoginAPIRequest(parameters: parameters)
-        var snsLoginResponse: KRAuthDTO = try await NetworkService.shared.requestAsync(loginAPIRequest)
+    func snackLogin(provider: AuthProvider,
+                    email: String,
+                    token: String,
+                    deviceId: String,
+                    deviceModel: String,
+                    pid: String = ProcessInfo.processInfo.globallyUniqueString,
+                    isGuest: Bool = false) async throws -> AuthEntity {
         
-        if snsLoginResponse.result == LZSConstant.ResponseError {
-            if snsLoginResponse.error?.code == LZSConstant.NotRegisteredUser {
-                let signUpRequest = SnsSignUpAPIRequest(parameters: parameters)
-                snsLoginResponse = try await NetworkService.shared.requestAsync(signUpRequest)
-            }
+        let body: [String: Any] = [
+            "email": email,
+            "token": token,
+            "deviceId": deviceId,
+            "deviceModel": deviceModel,
+            "pid": pid,
+            "isGuest": isGuest
+        ]
+        
+        let req = AuthLoginAPIRequest(provider: provider, body: body)
+        let dto: AuthLoginDTO = try await NetworkService.shared.requestAsync(req)
+        
+        guard dto.responseCode == "SUCCESS", let d = dto.data else {
+            let code = dto.errorData?.code ?? "UNKNOWN"
+            let msg  = dto.errorData?.defaultMessage ?? "Login failed"
+            throw AuthRepositoryError.api(code: code, message: msg)
         }
         
-        guard snsLoginResponse.result == LZSConstant.ResponseSuccess,
-              let data = snsLoginResponse.data,
-              let userEmail = data.email,
-              let userId = data.userId else {
-            throw NSError(
-                domain: "AuthError",
-                code: -1,
-                userInfo: nil
-            )
-        }
+        // 서버 타임스탬프가 ms 기준이라면 초단위 변환
+        let accessExpSec  = Double(d.accessToken.expiredAt)
+        let refreshExpSec = Double(d.refreshToken.expiredAt)
         
         await TokenService.shared.initializeTokens(
-            accessToken: data.accessToken.token,
-            refreshToken: data.refreshToken.token,
-            accessExpiryTimestamp: Double(data.accessToken.expiredAt),
-            refreshExpiryTimestamp: Double(data.refreshToken.expiredAt)
+            accessToken: d.accessToken.token,
+            refreshToken: d.refreshToken.token,
+            accessExpiryTimestamp: accessExpSec,
+            refreshExpiryTimestamp: refreshExpSec
         )
         
         return AuthEntity(
-            userId: "\(userId)",
-            email: userEmail,
-            accessToken: data.accessToken.token,
-            refreshToken: data.refreshToken.token,
-            accessExpiry: Double(data.accessToken.expiredAt),
-            refreshExpiry: Double(data.refreshToken.expiredAt)
+            userId: d.userId,
+            email: email,
+            accessToken: d.accessToken.token,
+            refreshToken: d.refreshToken.token,
+            accessExpiry: accessExpSec,
+            refreshExpiry: refreshExpSec
         )
-        
     }
     
-    
-    func logoutAndLoginGuestMode(logoutParameters: [String: Any],guestModeParameters: [String: Any]) async throws -> AuthEntity {
-        let logoutAPIRequest = LogoutAPIRequest(parameters: logoutParameters)
+    // MARK: - Snack Join
+    func snackSignup(provider: AuthProvider,
+                   email: String?,
+                   token: String,
+                   deviceId: String,
+                   deviceModel: String,
+                   pid: String,
+                   isGuest: Bool?,
+                   isAgreeMarketing: Bool,
+                   isAgreePushNotification: Bool,
+                   guestId: String?) async throws -> AuthJoinDataDTO {
         
-        let _: CommonAPISuccess = try await NetworkService.shared.requestAsync(logoutAPIRequest)
+        let dto: AuthJoinDTO
+        
+        if provider == .IOS_GUEST {
+            let body: [String: Any] = [
+                "email": email ?? "",
+                "token": token,
+                "deviceId": deviceId,
+                "deviceModel": deviceModel,
+                "pid": pid,
+                "isGuest": true,
+                "isAgreeMarketing": isAgreeMarketing,
+                "isAgreePushNotification": isAgreePushNotification
+            ]
+            
+            let req = GuestModeJoinAPIRequest(provider: provider, body: body)
+            dto = try await NetworkService.shared.requestAsync(req)
+        } else {
+            
+            let body: [String: Any] = [
+                "email": email ?? "",
+                "token": token,
+                "deviceId": deviceId,
+                "deviceModel": deviceModel,
+                "pid": pid,
+                "isAgreeMarketing": isAgreeMarketing,
+                "isAgreePushNotification": isAgreePushNotification,
+                "guestId": guestId ?? AppContext.shared.deviceUniqueID
+            ]
+            
+            let req = AuthJoinAPIRequest(provider: provider, body: body)
+            dto = try await NetworkService.shared.requestAsync(req)
+        }
+        
+        guard dto.responseCode == "SUCCESS", let data = dto.data else {
+            let code = dto.errorData?.code ?? "UNKNOWN"
+            let msg  = dto.errorData?.defaultMessage ?? "Join failed"
+            throw AuthRepositoryError.api(code: code, message: msg)
+        }
+        return data
+    }
+    
+    /// 스낵 로그아웃(네트워크만 수행). 성공하면 아무것도 반환하지 않음.
+    func snackLogout(refreshToken: String) async throws {
+        let req = AuthLogoutAPIRequest(refreshToken: refreshToken)
+        let res: LogoutResponseDTO = try await NetworkService.shared.requestAsync(req)
+        
+        guard res.responseCode == "SUCCESS" else {
+            let code = res.errorData?.code ?? "UNKNOWN"
+            let msg  = res.errorData?.defaultMessage ?? "Logout failed"
+            throw AuthRepositoryError.api(code: code, message: msg)
+        }
+    }
+    
+    ///--------------
 
-        let newUUID = LZSUtil.generateNewUniqueDeviceIdentifier()
-        
-        // 게스트 모드 파라미터 업데이트: 최신 UUID 기반으로 snsId, email, deviceId 갱신
-        var updatedGuestModeParameters = guestModeParameters
-        updatedGuestModeParameters["snsId"] = newUUID
-        updatedGuestModeParameters["email"] = "\(newUUID)@apple_guest.com"
-        updatedGuestModeParameters["deviceId"] = newUUID
-        
-        let guestModeLoginAPIRequest = GuestModeLoginAPIRequest(parameters: updatedGuestModeParameters)
-        let guestModeLoginResponse: KRAuthDTO = try await NetworkService.shared.requestAsync(guestModeLoginAPIRequest)
-        
-        guard guestModeLoginResponse.result == LZSConstant.ResponseSuccess,
-              let data = guestModeLoginResponse.data,
-              let userEmail = data.email,
-              let userId = data.userId else {
-            throw NSError(
-                domain: "AuthError",
-                code: -1,
-                userInfo: nil
-            )
-        }
-        
-        await TokenService.shared.initializeTokens(
-            accessToken: data.accessToken.token,
-            refreshToken: data.refreshToken.token,
-            accessExpiryTimestamp: Double(data.accessToken.expiredAt),
-            refreshExpiryTimestamp: Double(data.refreshToken.expiredAt)
-        )
-        
-        return AuthEntity(
-            userId: "\(userId)",
-            email: userEmail,
-            accessToken: data.accessToken.token,
-            refreshToken: data.refreshToken.token,
-            accessExpiry: Double(data.accessToken.expiredAt),
-            refreshExpiry: Double(data.refreshToken.expiredAt)
-        )
-    }
     
     func loginGuest(parameters: [String: Any]) async throws -> AuthEntity {
         let guestRequest = GuestModeLoginAPIRequest(parameters: parameters)
@@ -128,39 +176,7 @@ class AuthRepository: AuthRepositoryProtocol {
         )
         
         return AuthEntity(
-            userId: "\(userId)",
-            email: userEmail,
-            accessToken: data.accessToken.token,
-            refreshToken: data.refreshToken.token,
-            accessExpiry: Double(data.accessToken.expiredAt),
-            refreshExpiry: Double(data.refreshToken.expiredAt)
-        )
-    }
-    
-    func loginWithSavedData(parameters: [String: Any]) async throws -> AuthEntity {
-        let snsRequest = SnsLoginAPIRequest(parameters: parameters)
-        let response: KRAuthDTO = try await NetworkService.shared.requestAsync(snsRequest)
-        
-        guard response.result == LZSConstant.ResponseSuccess,
-              let data = response.data,
-              let userEmail = data.email,
-              let userId = data.userId else {
-            throw NSError(
-                domain: "AuthError",
-                code: -1,
-                userInfo: nil
-            )
-        }
-        
-        await TokenService.shared.initializeTokens(
-            accessToken: data.accessToken.token,
-            refreshToken: data.refreshToken.token,
-            accessExpiryTimestamp: Double(data.accessToken.expiredAt),
-            refreshExpiryTimestamp: Double(data.refreshToken.expiredAt)
-        )
-        
-        return AuthEntity(
-            userId: "\(userId)",
+            userId: userId,
             email: userEmail,
             accessToken: data.accessToken.token,
             refreshToken: data.refreshToken.token,
@@ -177,8 +193,18 @@ class AuthRepository: AuthRepositoryProtocol {
                             agreementType: .required),
             AgreementEntity(title: "만 14세 이상 사용자 이용동의",
                             agreementType: .required),
-            AgreementEntity(title: "마케팅 정보 수신 동의",
+            AgreementEntity(title: "프로모션/마케팅 정보 수신 동의",
                             subtitle: "설정 메뉴에서 변경할 수 있습니다.",
+                            agreementType: .optional),
+        ]
+    }
+    
+
+    func welcomeFetchAgreement() async throws -> [AgreementEntity] {
+        return [
+            AgreementEntity(title: "서비스 이용약관",
+                            agreementType: .required),
+            AgreementEntity(title: "프로모션/마케팅 정보 수신 동의",
                             agreementType: .optional),
         ]
     }

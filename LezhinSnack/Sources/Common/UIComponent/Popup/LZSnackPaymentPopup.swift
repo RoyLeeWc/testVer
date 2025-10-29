@@ -14,6 +14,12 @@ enum ProductType {
     case coin
 }
 
+// 어디가 코인 행인지 판별 키워드
+private let coinRowKeywords = ["코인", "coin"]
+
+private func isCoinRow(_ label: String) -> Bool {
+    coinRowKeywords.contains { label.localizedCaseInsensitiveContains($0) }
+}
 /// 결제 처리 내역 팝업
 final class LZSnackPaymentPopup: BasePopupView {
     // MARK: - 크기 재정의
@@ -137,7 +143,7 @@ final class LZSnackPaymentPopup: BasePopupView {
         if label.contains("코인") {
             let coinView = LZSnackCoinInfoView()
             coinView.coinInfoLabel.font = .pretendardRegular(size: 14)
-            coinView.setCoinText("1200")
+            coinView.setCoinText(value)
             // intrinsic size 유지
             coinView.setContentHuggingPriority(.required, for: .horizontal)
             valueView = coinView

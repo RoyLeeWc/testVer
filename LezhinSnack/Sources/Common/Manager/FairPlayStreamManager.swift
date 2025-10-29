@@ -6,6 +6,7 @@
 //
 import PallyConFPSSDK
 import AVFoundation
+import Foundation
 
 final class FairPlayStreamManager: NSObject, PallyConFPSLicenseDelegate, AVAssetResourceLoaderDelegate {
     static let shared = FairPlayStreamManager()
@@ -21,12 +22,17 @@ final class FairPlayStreamManager: NSObject, PallyConFPSLicenseDelegate, AVAsset
     private override init() {}
 
     // contentId ↔ AVURLAsset 만 저장
-    private var drmAssets: [ String: AVURLAsset ] = [:]
-
+    var drmAssets: [ String: AVURLAsset ] = [:]
     /// DRM 준비: AVURLAsset 에만 리소스 로더(delegate) 설정
-    func prepareDRM(for contentId: String, url: URL, token: String) {
-        // 1) AVURLAsset
-        let asset = AVURLAsset(url: url)
+    func prepareDRM(videoId: String, url: URL, token: String, contentId: String, cfCookieHeader: String) {
+        
+//        let asset = AVURLAsset(url: url)
+        var headers: [String: String] = [:]
+        headers["Cookie"] = cfCookieHeader
+        CloudFrontCookieUtil.installPathScopedCookies(cookieHeader: cfCookieHeader, manifestURL: url)
+        // (선택) CDN이 별도 요구하지 않는다면 SNACK-* 헤더는 HLS엔 불필요
+        let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
+        
         // 2) PallyConDRM 설정
         let config = PallyConDrmConfiguration(
             avURLAsset: asset,
@@ -40,6 +46,7 @@ final class FairPlayStreamManager: NSObject, PallyConFPSLicenseDelegate, AVAsset
 //        asset.resourceLoader.setDelegate(self, queue: .main)
 
         drmAssets[contentId] = asset
+        
     }
 
     /// AVPlayerItem 은 항상 새로 만들어서 반환
@@ -60,6 +67,12 @@ final class FairPlayStreamManager: NSObject, PallyConFPSLicenseDelegate, AVAsset
         guard result.isSuccess else {
             let errorMessage = result.error?.localizedDescription ?? "에러 정보 없음"
             print("에러: \(errorMessage)")
+            
+            NotificationCenter.default.post(
+              name: .drmLicenseFailed,
+              object: nil,
+              userInfo: ["contentId": result.contentId, "error": result.error ?? NSError()]
+            )
             
             if let error = result.error {
                 let detailErrorMessage: String

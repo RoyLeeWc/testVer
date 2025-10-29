@@ -14,7 +14,41 @@ final class ContentsDetailViewController: UIViewController {
     }
     
     private var sections: [DetailSection] = []
+    private let ratingTypeIconMap: [String: String] = [
+        "ALL":  "ic_rating_all_color",
+        "PG12": "ic_rating_12_color",
+        "PG15": "ic_rating_15_color",
+        "R19":  "ic_rating_19_color",
+    ]
     
+    private let ratingReasonIconMap: [String: String] = [
+        "SUBJECT" :         "ic_subject_color",
+        "SEXUALITY":       "ic_sexuality_color",
+        "VIOLENCE":        "ic_violence_color",
+        "DIALOGUE":        "ic_dialogue_color",
+        "HORROR":          "ic_horror_color",
+        "DRUGS":           "ic_drugs_color",
+        "IMITATION_RISK":  "ic_imitative_color"
+    ]
+    
+    private func promotionType(from contractType: String?) -> LZSnackPromotionViewType? {
+        guard let t = contractType?.uppercased() else { return nil }
+        
+        switch t {
+        case "LEZHIN_ORIGINAL":   return .lezhinIPIcons
+        case "BOMTOON_ORIGINAL":  return .bomtoonIPIcons
+        case "GENERAL_ORIGINAL":  return .originalIcons
+        case "OTHERS":            return nil   // 뱃지 표시 안 함
+        default:                  return nil
+        }
+    }
+    
+    private let roleLabelMap: [String: String] = [
+        "DIRECTOR": "감독",
+        "WRITER":   "작가",
+        "PRODUCER": "프로듀서"
+    ]
+                    
     let sectionData = [
         (id: UUID(), title: "장르"),
         (id: UUID(), title: "키워드"),
@@ -28,6 +62,8 @@ final class ContentsDetailViewController: UIViewController {
     
     private var collectionView: UICollectionView!
     private var dataSource: UICollectionViewDiffableDataSource<DetailSection, Item>!
+    
+    private var contents: DisplayContentsDetailEntity?
     
     var items: [Item] = (0..<200).map { Item(title: "Item \($0)") }
     // 최하단 그라디언트 뷰
@@ -51,6 +87,11 @@ final class ContentsDetailViewController: UIViewController {
                 grad.frame = gradientView.bounds
             }
         }
+    }
+    
+    func attach(contents: DisplayContentsDetailEntity) {
+        self.contents = contents
+        if isViewLoaded { applySnapshot() }
     }
     
     override func viewDidLoad() {
@@ -175,31 +216,73 @@ final class ContentsDetailViewController: UIViewController {
             configuration: config
         )
     }
-    
     private func applySnapshot() {
-        // 1) 섹션 생성
-        sections = sectionData.map { .detail(id: $0.id, title: $0.title) }
-
-        // 2) 스냅샷 초기화 및 섹션 추가
+        var pairs: [(title: String, value: String)] = []
+        
+        guard let detailedContents = contents else {
+            // 데이터 없으면 섹션/아이템 비우기
+            sections = []
+            var emptySnap = NSDiffableDataSourceSnapshot<DetailSection, Item>()
+            dataSource.apply(emptySnap, animatingDifferences: false)
+            return
+        }
+        
+        // 1) 장르
+        let genreNames = detailedContents.genreTags
+            .sorted { ($0.orderNumber ?? 0) < ($1.orderNumber ?? 0) }
+            .map { $0.name }
+        if !genreNames.isEmpty {
+            pairs.append(("장르", genreNames.joined(separator: "・")))
+        }
+        
+        // 2) 키워드
+        let keywordNames = detailedContents.keywordTags
+            .sorted { ($0.orderNumber ?? 0) < ($1.orderNumber ?? 0) }
+            .map { $0.name }
+        if !keywordNames.isEmpty {
+            pairs.append(("키워드", keywordNames.joined(separator: "・")))
+        }
+        
+        // 3) 줄거리
+        if let s = detailedContents.synopsis, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            pairs.append(("줄거리", s))
+        }
+        
+        // 4) 출연진(APPEARANCE)
+        let castNames = detailedContents.creators
+            .filter { $0.creatorRoleType.uppercased() == "APPEARANCE" }
+            .map { $0.realName }
+        if !castNames.isEmpty {
+            pairs.append(("출연진", castNames.joined(separator: ",")))
+        }
+        
+        // 5) 크리에이터(DIRECTOR/WRITER/PRODUCER 묶음)
+        let creatorRolesOrder = ["DIRECTOR", "WRITER", "PRODUCER"]
+        var creatorLines: [String] = []
+        for role in creatorRolesOrder {
+            let names = detailedContents.creators
+                .filter { $0.creatorRoleType.uppercased() == role }
+                .map { $0.realName }
+            if !names.isEmpty, let label = roleLabelMap[role] {
+                creatorLines.append("\(label): \(names.joined(separator: ","))")
+            }
+        }
+        if !creatorLines.isEmpty {
+            pairs.append(("크리에이터", creatorLines.joined(separator: "\n")))
+        }
+        
+        // 섹션/아이템 스냅샷 적용 (요청한 순서 유지: 장르 → 키워드 → 줄거리 → 출연진 → 크리에이터)
+        sections = pairs.map { .detail(id: UUID(), title: $0.title) }
+        
         var snapshot = NSDiffableDataSourceSnapshot<DetailSection, Item>()
         snapshot.appendSections(sections)
-
-        // 3) 섹션별로 한 개의 아이템만 추가
-        let texts = [
-            "장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르장르・장르・장르",
-            "키워드・키워드・키워드키워드・키워드・키워드키워드・키워드・키워드키워드・키워드・키워드키워드・키워드・키워드키워드・키워드・키워드키워드・키워드・키워드키워드・키워드・키워드키워드・키워드・키워드키워드・키워드・키워드키워드・키워드・키워드키워드・키워드・키워드키워드・키워드・키워드키워드・키워드・키워드",
-            "전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우. 세상을 향해 자유를 선포한다! 전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우.전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우. 세상을 향해 자유를 선포한다! 전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우.전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우. 세상을 향해 자유를 선포한다! 전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우.전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우. 세상을 향해 자유를 선포한다! 전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우.전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우. 세상을 향해 자유를 선포한다! 전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우.전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우. 세상을 향해 자유를 선포한다! 전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우.전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우. 세상을 향해 자유를 선포한다! 전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우.전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우. 세상을 향해 자유를 선포한다! 전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우.전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우. 세상을 향해 자유를 선포한다! 전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우.전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우. 세상을 향해 자유를 선포한다! 전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우.전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우. 세상을 향해 자유를 선포한다! 전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우.전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우. 세상을 향해 자유를 선포한다! 전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우.전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우. 세상을 향해 자유를 선포한다! 전 세계 헌터 중 유일무이, 전무후무 시스템과 레벨업 능력을 각성한 진우."
-        ]
-
-        for (index, section) in sections.enumerated() {
-            let singleItem = Item(title: texts[index])
-            snapshot.appendItems([singleItem], toSection: section)
+        
+        for (idx, p) in pairs.enumerated() {
+            snapshot.appendItems([Item(title: p.value)], toSection: sections[idx])
         }
-
-        // 4) 데이터 소스에 적용
+        
         dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
             guard let self = self else { return }
-            // 스냅샷 적용 직후 contentSize 재확인
             self.collectionView.layoutIfNeeded()
             let isScrollable = self.collectionView.contentSize.height > self.collectionView.bounds.height
             self.gradientView.isHidden = !isScrollable
@@ -225,18 +308,50 @@ final class ContentsDetailViewController: UIViewController {
                     withReuseIdentifier: ContentsDetailParentHeader.reuseIdentifier,
                     for: indexPath
                 ) as? ContentsDetailParentHeader else { return UICollectionReusableView()}
+                
                 // 글로벌 헤더 설정
-                header.headerTitle.text = "레진코믹스 12주간 로맨스 TOP 1 원작 웹툰"
-                header.headerSubTitle.text = "2025・에피소드 72개"
-                let icons = [
-                    "ic_rating_15_color",
-                    "ic_sexuality_color",
-                    "ic_imitative_color",
-                    "ic_theme_color"
-                ].compactMap { name -> UIImage? in
-                    UIImage(named: name)?.resized(to: .init(width: 24, height: 24))
+                if let headerContents = self?.contents {
+                    
+                    header.headerTitle.text = headerContents.signatureText ?? headerContents.title
+                    
+                    let date = Date()
+                    let calendar = Calendar.current
+                    let components = calendar.dateComponents([.year, .month, .day], from: date)
+                    let year = String(components.year ?? 2025)
+                    header.headerSubTitle.text = "\(year)・에피소드 \(headerContents.episodeCount)개"
+                    
+                    // 프로모션 뱃지 주입
+                    header.setPromotionType(self?.promotionType(from:headerContents.contractType))
+                    
+                    var iconNames: [String] = []
+                    if let ageRatingType = headerContents.ageRatingType,
+                       let badge = self?.ratingTypeIconMap[ageRatingType] {
+                        iconNames.append(badge)
+                    }
+                    for ageRatingReasons in headerContents.ageRatingReasons {
+                        let key = ageRatingReasons.uppercased()
+                        if let name = self?.ratingReasonIconMap[key] {
+                            iconNames.append(name)
+                        }
+                    }
+                    let icons: [UIImage] = iconNames
+                        .compactMap { UIImage(named: $0)?.resized(to: .init(width: 24, height: 24)) }
+                    header.addImagesToStack(icons)
+                } else {
+                    header.headerTitle.text = "레진코믹스 12주간 로맨스 TOP 1 원작 웹툰"
+                    header.headerSubTitle.text = "2025・에피소드 72개"
+                    header.setPromotionType(nil)
+                    let icons = [
+                        "ic_rating_15_color",
+                        "ic_sexuality_color",
+                        "ic_imitative_color",
+                        "ic_subject_color"
+                    ].compactMap { name -> UIImage? in
+                        UIImage(named: name)?.resized(to: .init(width: 24, height: 24))
+                    }
+                    header.addImagesToStack(icons)
                 }
-                header.addImagesToStack(icons)
+                
                 return header
 
             case UICollectionView.elementKindSectionHeader:

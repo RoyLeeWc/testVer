@@ -57,4 +57,10 @@ public extension Notification.Name {
     /// 뷰어, 회차리스트에서 미리 보기 선택시에
     static let LZSEarlyAccessReceiveNotification = Notification.Name("LZSEarlyAccessReceiveNotification")
     
+    /// 홈 진열 리스트 api 완료시점
+    static let LZSHomeAllSectionsLoaded = Notification.Name("LZSHomeAllSectionsLoaded")
+    
+    /// 뷰어 라이센스에러
+    static let drmLicenseFailed = Notification.Name("DRMLicenseFailed")
+    
 }

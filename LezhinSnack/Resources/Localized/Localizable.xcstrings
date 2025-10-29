@@ -1,6 +1,39 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "고객지원_1:1문의_타이틀" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1:1 문의"
+          }
+        }
+      }
+    },
+    "고객지원_FAQ_타이틀" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FAQ"
+          }
+        }
+      }
+    },
+    "고객지원_공지사항_타이틀" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "공지사항"
+          }
+        }
+      }
+    },
     "내목록_구매한_타이틀" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30,7 +63,18 @@
         }
       }
     },
-    "내목록_빈목록_타이틀" : {
+    "내목록_빈구매목록_타이틀" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "구매한 작품이 없습니다."
+          }
+        }
+      }
+    },
+    "내목록_빈시청목록_타이틀" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
@@ -55,6 +99,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "最近没有观看的作品。"
+          }
+        }
+      }
+    },
+    "내목록_빈찜한목록_타이틀" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "찜한 작품이 없습니다."
           }
         }
       }
@@ -954,6 +1009,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "接收推送通知"
+          }
+        }
+      }
+    },
+    "앱바_고객지원_타이틀" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "고객 지원"
           }
         }
       }
@@ -2199,6 +2265,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "按最新排序"
+          }
+        }
+      }
+    },
+    "컨텍스트메뉴_회차업데이트순" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "회차 업데이트 순"
           }
         }
       }

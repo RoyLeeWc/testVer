@@ -137,6 +137,10 @@ final class MyCoinCommonHeader: UICollectionReusableView {
     @objc func sortButtonDidTap(anchor: UIView) {
         delegate?.sortButtonDidTap(header: self, anchor: anchor)
     }
+    
+//    func changeChargeFilter(_ filter: CoinChargeFilter) {
+//        viewModel.resetAndFetchCharges(filter: filter) // 0페이지부터 다시
+//    }
 
     func setCoinInfoViewText() {
         currentCoinTitleLabel.text = "내코인_충전내역_헤더_보유코인".localized

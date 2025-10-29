@@ -56,23 +56,23 @@ final class BottomSheetMembershipProductCell: UICollectionViewCell {
     }
     
     
-    func configure(with entity: MembershipProductEntity) {
+    func configure(with entity: ProductItemEntity) {
         
-        let originalPriceInt = Int(entity.originalPrice)
-        let discountInt = Int(entity.salePrice)
+        let originalPriceInt = entity.effectivePrice
+        let discountInt = entity.price
         
         membershipProductPriceLabel.text = "충전소_가격기호".localized(with: originalPriceInt)
         
-        switch entity.membershipType {
-        case "annualSubscription":
+        switch entity.periodType {
+        case "ANNUAL":
             membershipProductNameLabel.text = "충전소_연간멤버십_타이틀".localized
-        case "monthlySubscription":
+        case "MONTHLY":
             membershipProductNameLabel.text = "충전소_월간멤버십_타이틀".localized
         default:
             break
         }
         
-        if entity.isBestProducts {
+        if entity.isBest {
             contentView.layer.borderWidth = 1
             contentView.layer.borderColor = UIColor(.borderBrandStronger).cgColor
             

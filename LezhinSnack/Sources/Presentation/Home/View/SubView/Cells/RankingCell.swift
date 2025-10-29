@@ -64,7 +64,7 @@ final class RankingCell: UICollectionViewCell {
         label.isSkeletonable = true
         return label
     }()
-    
+    private let markContainerView = UIView()
     private var rankMarkView: LZSnackMarkView?
     
     override init(frame: CGRect) {
@@ -74,6 +74,38 @@ final class RankingCell: UICollectionViewCell {
     
     required init?(coder: NSCoder) {
         fatalError("init(coder:)는 지원하지 않습니다. 코드 기반으로 구현해 주세요.")
+    }
+    
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        reset()
+    }
+    
+    func reset() {
+        // 이전 상태 정리
+        rankThumbnailImageView.image = nil
+        self.rankMarkView = nil
+        rankMarkView?.removeFromSuperview()
+        markContainerView.subviews.forEach { $0.removeFromSuperview() }
+    }
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateLabelHeightsIfReady()
+    }
+    
+    private func updateLabelHeightsIfReady() {
+        // 가로폭이 아직 0이면 업데이트하지 않음
+        let titleW = rankTitleLabel.bounds.width
+        let keywordW = rankKeywordLabel.bounds.width
+        guard titleW > 1, keywordW > 1 else { return }
+
+        let tSize = rankTitleLabel.sizeThatFits(CGSize(width: titleW, height: .greatestFiniteMagnitude))
+        let kSize = rankKeywordLabel.sizeThatFits(CGSize(width: keywordW, height: .greatestFiniteMagnitude))
+
+        // 1pt 이상으로 보장
+        rankTitleLabelHeightConstraint?.update(offset: max(ceil(tSize.height), 1))
+        rankKeywordLabelHeightConstraint?.update(offset: max(ceil(kSize.height), 1))
     }
     
     private func setupUI() {
@@ -123,54 +155,81 @@ final class RankingCell: UICollectionViewCell {
             make.trailing.equalToSuperview()
         }
         
+        // ⬇️ 키워드 라벨 아래에 마크 컨테이너 추가
+        rankContentContainerView.addSubview(markContainerView)
+        markContainerView.snp.makeConstraints { make in
+            make.top.equalTo(rankKeywordLabel.snp.bottom).offset(8)
+            make.leading.equalTo(rankThumbnailImageView.snp.trailing).offset(8)
+            make.trailing.lessThanOrEqualToSuperview().inset(8)
+            make.height.equalTo(24)
+//            make.bottom.lessThanOrEqualToSuperview().inset(8)
+        }
+        
         rankThumbnailImageView.roundCorners(cornerRadius: 4)
         
     }
     
-    func configure(_ data: HomeSectionEntity, rank: Int) {
+    func configure(ranking: ContentsRankingItemEntity, rank: Int) {
+        // TODO: rank 이미지/라벨 갱신
+        // TODO: 썸네일: ranking.contentsDetail?.coverImagePath
+        // TODO: 타이틀:  ranking.contentsDetail?.title ?? ranking.contentsAlias
+        showAnimatedGradientSkeleton(isPlaceholder: false)
         
-        resizeUILabelsHeight(data)
-        
+        let thumbnailImagePathUrl = URL(string: ranking.contentsDetail?.coverImagePath ?? "")
+        rankThumbnailImageView.kf.setImage(with: thumbnailImagePathUrl)
+        resizeUILabelsHeight(ranking)
         let imageName = "rankNumber\(rank)"
         rankImageView.image = UIImage(named: imageName)
+        showAnimatedGradientSkeleton(isPlaceholder: false)
         
-        if !data.isPlaceholder {
-            if let rankMarkView = rankMarkView {    
-                rankMarkView.removeFromSuperview()
-                self.rankMarkView = nil
-                makeRankMarkView()
-            } else {
-                makeRankMarkView()
-            }
+        if let type = ranking.badges
+            .lazy
+            .compactMap({ LZSnackMarkType(badge: $0) })
+            .first {
+            makeRankMarkView(type: type)
+        } else {
+            // 배지가 없거나 매핑 불가 마크 숨김
+            rankMarkView = nil
         }
         
-        showAnimatedGradientSkeleton(isPlaceholder: data.isPlaceholder)
+    }
+    
+    func configure(curation: ContentsCurationItemEntity, rank: Int) {
+        // TODO: rank 이미지/라벨 갱신
+        // TODO: 썸네일: ranking.contentsDetail?.coverImagePath
+        // TODO: 타이틀:  ranking.contentsDetail?.title ?? ranking.contentsAlias
+        showAnimatedGradientSkeleton(isPlaceholder: false)
+        rankMarkView?.removeFromSuperview()
+        rankMarkView = nil
+        let thumbnailImagePathUrl = URL(string: curation.contentsDetail?.coverImagePath ?? "")
+        rankThumbnailImageView.kf.setImage(with: thumbnailImagePathUrl)
+        resizeUILabelsHeight(curation)
+        let imageName = "rankNumber\(rank)"
+        rankImageView.image = UIImage(named: imageName)
+        showAnimatedGradientSkeleton(isPlaceholder: false)
+        
+        if let type = curation.badges
+            .lazy
+            .compactMap({ LZSnackMarkType(badge: $0) })
+            .first {
+            makeRankMarkView(type: type)
+        } else {
+            // 배지가 없거나 매핑 불가 마크 숨김
+            rankMarkView = nil
+        }
         
     }
     
     
-    func resizeUILabelsHeight(_ data: HomeSectionEntity) {
+    func configure(_ data: HomeSectionEntity) {
+        showAnimatedGradientSkeleton(isPlaceholder: data.isPlaceholder)
+    }
+    
+    func resizeUILabelsHeight(_ data: ContentsCurationItemEntity) {
         
-//        let paragraphStyle = NSMutableParagraphStyle()
-//        paragraphStyle.minimumLineHeight = 22
-//        paragraphStyle.maximumLineHeight = 22
-//        
-//        // NSAttributedString 생성. 폰트, 색상, paragraph style 적용
-//        let attributedTitle = NSAttributedString(
-//            //string: data.title+data.title+data.title+data.title+data.title+data.title+data.title+data.title,
-//            string: data.title,
-//            attributes: [
-//                .font: UIFont.pretendardMedium(size: 16),
-//                .foregroundColor: UIColor.white,
-//                .paragraphStyle: paragraphStyle
-//            ]
-//        )
-//        // rankTitleLabel에 attributedText 할당
-//        rankTitleLabel.attributedText = attributedTitle
+        rankTitleLabel.text = data.contentsDetail?.title
         
-        rankTitleLabel.text = "2줄 초과시 말줄임 2줄 초과시 말줄임 2줄 초과시 말줄임 2줄 초과시 말줄임 2줄 초과시 말줄임 2줄 초과시 말줄임 2줄 초과시 말줄임 "
-        
-        let keywords = ["키워드1", "키워드2", "키워드3"]
+        let keywords = data.contentsDetail?.keywordNames ?? []
         let keywordsString = keywords.joined(separator: " · ")
         
         rankKeywordLabel.text = keywordsString
@@ -186,15 +245,33 @@ final class RankingCell: UICollectionViewCell {
         
     }
     
-    func makeRankMarkView() {
-        rankMarkView = LZSnackMarkView(type: .allCases.randomElement()!)
+    
+    func resizeUILabelsHeight(_ data: ContentsRankingItemEntity) {
+        
+        rankTitleLabel.text = data.contentsDetail?.title
+        
+        let keywords = data.contentsDetail?.keywordNames ?? []
+        let keywordsString = keywords.joined(separator: " · ")
+        
+        rankKeywordLabel.text = keywordsString
+        
+        self.layoutIfNeeded()
+        let newTitleSize = rankTitleLabel.sizeThatFits(CGSize(width: rankTitleLabel.frame.width, height: CGFloat.greatestFiniteMagnitude))
+        
+        let newKeywordSize = rankKeywordLabel.sizeThatFits(CGSize(width: rankKeywordLabel.frame.width, height: CGFloat.greatestFiniteMagnitude))
+        
+        // 저장된 제약조건을 업데이트
+        self.rankTitleLabelHeightConstraint?.update(offset: newTitleSize.height)
+        self.rankKeywordLabelHeightConstraint?.update(offset: newKeywordSize.height)
+        
+    }
+    
+    func makeRankMarkView(type: LZSnackMarkType) {
+        rankMarkView = LZSnackMarkView(type:type)
         guard let rankMarkView else { return }
-        rankContentContainerView.addSubview(rankMarkView)
+        markContainerView.addSubview(rankMarkView)
         rankMarkView.snp.makeConstraints { make in
-            make.top.equalTo(rankKeywordLabel.snp.bottom).offset(8)
-            make.leading.equalTo(rankThumbnailImageView.snp.trailing).offset(8)
-            make.trailing.lessThanOrEqualToSuperview().inset(8)
-            make.bottom.equalToSuperview().inset(8)
+            make.edges.equalToSuperview()  // 컨테이너 한 칸짜리
         }
     }
     

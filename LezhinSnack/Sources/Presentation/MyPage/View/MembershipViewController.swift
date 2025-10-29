@@ -12,10 +12,15 @@ import StoreKit
 
 final class MembershipViewController: UIViewController, ChildRightCloseNavigationBarPresentable {
     
+    private var info: MySubscriptionInfoEntity?
+    private var state: LZSnackMembershipState = .neverSubscribed
     
     var childNavigationBar = ChildRightCloseNavigationBar()
     
-    var currentState = LZSnackMembershipState.allCases.randomElement()!
+    func configure(subscriptionInfo: MySubscriptionInfoEntity?, state: LZSnackMembershipState) {
+        self.info = subscriptionInfo
+        self.state = state
+    }
     
     private let membershipStateContainerView: UIView = {
         let view = UIView()
@@ -175,7 +180,7 @@ final class MembershipViewController: UIViewController, ChildRightCloseNavigatio
             make.top.equalTo(membershipStateLabel.snp.bottom).offset(6)
         }
         
-        switch currentState {
+        switch state {
         case .neverSubscribed:
             break
         case .monthlySubscriptionCancelled:
@@ -183,28 +188,30 @@ final class MembershipViewController: UIViewController, ChildRightCloseNavigatio
             membershipStateLabel.textColor = UIColor(.foregroundSubtler)
             membershipStateLabel.backgroundColor = UIColor(.fillDisabled)
             membershipStateIconImageView.image = UIImage(named: "monthlySubscribedBanner")
-            membershipStateDescriptionLabel.setText("월간 멤버십 무제한 시청이 12일 뒤 만료 예정이에요.", highlight: "12일 뒤 만료", lineHeight: 22)
+            let desc = cancelDescription(period: .monthly, info: info)
+            membershipStateDescriptionLabel.setText(desc.text, highlight: desc.highlight, lineHeight: 22)
             
         case .monthlySubscriptionActive:
             membershipStateLabel.text = "구독 중"
             membershipStateLabel.textColor = .white
             membershipStateLabel.backgroundColor = UIColor(.fillBrand)
             membershipStateIconImageView.image = UIImage(named: "monthlySubscribedBanner")
-            membershipStateDescriptionLabel.setText("월간 멤버십으로 모든 작품을 무제한 시청 중이에요!", highlight: "월간 멤버십", lineHeight: 22)
+            membershipStateDescriptionLabel.setText("월간 멤버십으로 모든 작품을\n무제한 시청 중이에요!", highlight: "월간 멤버십", lineHeight: 22)
             
         case .annualSubscriptionCancelled:
             membershipStateLabel.text = "구독 해지"
             membershipStateLabel.textColor = UIColor(.foregroundSubtler)
             membershipStateLabel.backgroundColor = UIColor(.fillDisabled)
             membershipStateIconImageView.image = UIImage(named: "annualSubscribedBanner")
-            membershipStateDescriptionLabel.setText("연간 멤버십 무제한 시청이 12일 뒤 만료 예정이에요.", highlight: "12일 뒤 만료", lineHeight: 22)
+            let desc = cancelDescription(period: .annual, info: info)
+            membershipStateDescriptionLabel.setText(desc.text, highlight: desc.highlight, lineHeight: 22)
             
         case .annualSubscriptionActive:
             membershipStateLabel.text = "구독 중"
             membershipStateLabel.textColor = .white
             membershipStateLabel.backgroundColor = UIColor(.fillBrand)
             membershipStateIconImageView.image = UIImage(named: "annualSubscribedBanner")
-            membershipStateDescriptionLabel.setText("연간 멤버십으로 모든 작품을 무제한 시청 중이에요!", highlight: "연간 멤버십", lineHeight: 22)
+            membershipStateDescriptionLabel.setText("연간 멤버십으로 모든 작품을\n무제한 시청 중이에요!", highlight: "연간 멤버십", lineHeight: 22)
         }
     }
     
@@ -288,14 +295,69 @@ final class MembershipViewController: UIViewController, ChildRightCloseNavigatio
         
         paymentInfoTitleLabel.text = "결제 정보"
         
-        recentPaymentDateLabel.text = "2025.02.15"
+        recentPaymentDateLabel.text = format(info?.lastPaymentAt ?? 0)
         recentPaymentDateTitleLabel.text = "최근 결제일"
         
-        nextPaymentDateLabel.text = "2025.02.15"
+        nextPaymentDateLabel.text = format(info?.nextPaymentAt ?? 0)
         nextPaymentDateTitleLabel.text = "다음 결제일"
         
-        paymentTypeLabel.text = "애플 앱스토어 인앱결제"
+        paymentTypeLabel.text = displayProviderText(type: info?.platformType)
         paymentTypeTitleLabel.text = "결제 수단"
+    }
+    
+    private func displayProviderText(type: MySubscriptionInfoEntity.PlatformType?) -> String {
+        guard let type = type else { return "기타" }
+        switch type {
+        case .ios:     return "애플 앱스토어 인앱 결제"
+        case .android: return "구글 플레이 스토어 인앱 결제"
+        case .unknown: return "기타"
+        }
+    }
+    
+    private func format(_ ms: Int64) -> String {
+        let date = Date(timeIntervalSince1970: Double(ms) / 1000.0)
+        let f = DateFormatter()
+        f.locale = .current
+        f.timeZone = .current
+        f.dateFormat = "yyyy.MM.dd"
+        return f.string(from: date)
+    }
+    
+    private func formatOrDash(_ ms: Int64?) -> String {
+        guard let ms, ms > 0 else { return "-" }
+        let date = Date(timeIntervalSince1970: Double(ms) / 1000.0)
+        let f = DateFormatter()
+        f.locale = .current
+        f.timeZone = .current
+        f.dateFormat = "yyyy.MM.dd"
+        return f.string(from: date)
+    }
+
+    private func daysRemaining(until ms: Int64?) -> Int? {
+        guard let ms, ms > 0 else { return nil }
+        let end = Date(timeIntervalSince1970: Double(ms) / 1000.0)
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: Date())
+        let startOfEnd   = cal.startOfDay(for: end)
+        let comps = cal.dateComponents([.day], from: startOfToday, to: startOfEnd)
+        guard let d = comps.day else { return nil }
+        return max(0, d) // 이미 지났다면 0
+    }
+
+    /// 구독 해지 상태일 때 상단 문구 만들기 (gracePeriodEndAt 우선, 없으면 endedAt)
+    private func cancelDescription(period: MySubscriptionInfoEntity.PeriodType,
+                                   info: MySubscriptionInfoEntity?) -> (text: String, highlight: String) {
+        let plan = (period == .annual) ? "연간 멤버십" : "월간 멤버십"
+        let deadline = info?.gracePeriodEndAt ?? info?.endedAt
+        if let d = daysRemaining(until: deadline) {
+            let highlight = "\(d)일 뒤 만료"
+            let text = "\(plan) 무제한 시청이\n\(highlight) 예정이에요."
+            return (text, highlight)
+        }
+        // 날짜를 계산할 수 없으면 보수적으로 표현
+        let highlight = "만료"
+        let text = "\(plan) 무제한 시청이\n\(highlight) 예정이에요."
+        return (text, highlight)
     }
     
     

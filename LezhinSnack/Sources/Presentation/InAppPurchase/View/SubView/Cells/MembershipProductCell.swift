@@ -110,11 +110,10 @@ final class MembershipProductCell: UICollectionViewCell {
         }
     }
     
-    
-    func configure(with entity: MembershipProductEntity) {
+    func configure(with entity: ProductItemEntity) {
         
-        let originalPriceInt = Int(entity.originalPrice)
-        let discountInt = Int(entity.salePrice)
+        let originalPriceInt = entity.effectivePrice
+        let discountInt = entity.price
         
         membershipProductPriceLabel.text = "충전소_가격기호".localized(with: originalPriceInt)
         
@@ -137,11 +136,11 @@ final class MembershipProductCell: UICollectionViewCell {
         membershipProductDiscountPriceLabel.attributedText = attributedString
         
         
-        salePercentageLabel.text = entity.salePersentage.cleanString + "%"
+        salePercentageLabel.text = String(entity.discountPercentInt) + "%"
         
         let lines = [
-            "첫 번째 항목: 중요한 정보",
-            "두 번째 항목: 설명이 길어질 수도 있음",
+            entity.description,
+//            "두 번째 항목: 설명이 길어질 수도 있음",
 //            "세 번째 항목: 간단 요약",
 //            "네 번째 항목: 간단 요약",
 //            "다선 번째 항목: 간단 요약",
@@ -158,13 +157,13 @@ final class MembershipProductCell: UICollectionViewCell {
             lineSpacing: 0,
             paragraphSpacing: 0
         )
-        
-        switch entity.membershipType {
-        case "annualSubscription":
+       
+        switch entity.periodType {
+        case "ANNUAL":
             membershipProductNameLabel.text = "충전소_연간멤버십_타이틀".localized
             membershipIconImageView.image = UIImage(named: "annualSubscribedBanner")
             setupNonDisccount()
-        case "monthlySubscription":
+        case "MONTHLY":
             membershipProductNameLabel.text = "충전소_월간멤버십_타이틀".localized
             membershipIconImageView.image = UIImage(named: "monthlySubscribedBanner")
             setupDisccount()
@@ -172,7 +171,7 @@ final class MembershipProductCell: UICollectionViewCell {
             break
         }
         
-        if entity.isBestProducts {
+        if entity.isBest {
             contentView.layer.borderWidth = 1
             contentView.layer.borderColor = UIColor(.borderBrandStronger).cgColor
             

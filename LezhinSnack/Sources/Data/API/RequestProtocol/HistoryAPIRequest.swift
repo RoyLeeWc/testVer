@@ -8,7 +8,7 @@
 import Alamofire
 
 struct CoinChargeHistoryAPIRequest: ApiRequestProtocol {
-    var isUseAccessToken: Bool { true }
+    var isUseAccessToken: Bool { false }
     var isPrintLog: Bool { AppContext.shared.isPrintAllApiLog ? true : false }
     var url: String { APIEndpoint.coinChargeHistory.url }
     var method: HTTPMethod { .get }
@@ -26,7 +26,7 @@ struct CoinChargeHistoryAPIRequest: ApiRequestProtocol {
 
 
 struct PurchaseHistoryAPIRequest: ApiRequestProtocol {
-    var isUseAccessToken: Bool { true }
+    var isUseAccessToken: Bool { false }
     var isPrintLog: Bool { AppContext.shared.isPrintAllApiLog ? true : false }
     var url: String { APIEndpoint.purchaseHistory.url }
     var method: HTTPMethod { .get }

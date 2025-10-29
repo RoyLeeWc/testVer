@@ -163,7 +163,7 @@ final class UserAuthViewController: UIViewController, ChildRightCloseNavigationB
         return view
     }()
     
-    // 하... 레진으로 로그인
+    // 레진으로 로그인
     private var lezhinLoginButton: UIButton = {
         let button = UIButton(type: .system)
         
@@ -216,26 +216,70 @@ final class UserAuthViewController: UIViewController, ChildRightCloseNavigationB
     
     
     private func bind() {
+
+        viewModel.$needSignupFlow
+            .compactMap { $0 }                      // (provider, email, token) 로 언랩
+            .receive(on: RunLoop.main)
+            .sink { [weak self] flow in
+                guard let self = self else { return }
+                // 이미 약관 화면이 떠있으면 중복 푸시 방지
+                if self.navigationController?.topViewController is SignUpAgreementListViewController {
+                    return
+                }
+                guard let vc = AppContext.container.resolve(SignUpAgreementListViewController.self) else { return }
+                vc.showsChildNavBar = true   // push라면 네비바 있는 모드가 자연스러움
+                
+                // 약관 완료 콜백: 여기서 반드시 flow의 값 사용!
+                vc.onAgreementsAccepted = { [weak self] _ in
+                    guard let self = self else { return }
+                    // 필요 시 마케팅/푸시 Defaults는 VC에서 세팅해두었다고 가정
+                    self.viewModel.signupThenLogin(
+                        provider: flow.provider,
+                        email: flow.email,
+                        token: flow.token,
+                        agreeMarketing: Defaults.isAgreeMarketing,
+                        agreePush: Defaults.isAgreePushNotification
+                    )
+                    self.viewModel.needSignupFlow = nil   // 한 번만 반응하게 초기화
+                }
+                self.navigationController?.pushViewController(vc, animated: true)
+            }.store(in: &subscriptions)
+        
         viewModel.$isLoginSuccess
             .receive(on: RunLoop.main)
             .sink { [weak self] isLoginSuccess in
                 guard let isLoginSuccess = isLoginSuccess else { return }
+                // 지금 네비게이션 스택의 최상단 VC가 '회원가입 완료' 화면인지 확인
+                let isOnSignUpSuccess = (self?.navigationController?.topViewController is SignUpSuccessViewController)
+                
                 if isLoginSuccess {
-                    
-                    let popup = LZSnackAlertPopupView(
-                        width: 320,
-                        height: 222,
-                        title: "로그인 성공",
-                        message: "\n로그인 타입 : \(Defaults.userLoginType)\n로그인 이메일 : \(Defaults.userEmail)",
-                        buttonTitle: "닫기",
-                        handler: { self?.navigationController?.popViewController(animated: true) }
-                    )
-                    popup.show()
-
-                    
+                    if isOnSignUpSuccess {
+                        // (필요하면 토큰/프로필 동기화 등 후처리만 조용히)
+                        return
+                    } else {
+                        // 그 외 로그인 성공: 기존 동작 유지 (팝업 + 한 단계 뒤로)
+                        let popup = LZSnackAlertPopupView(
+                            width: 320,
+                            height: 222,
+                            title: "로그인 성공",
+                            message: "\n로그인 타입 : \(Defaults.userLoginType)\n로그인 이메일 : \(Defaults.userEmail)",
+                            buttonTitle: "닫기",
+                            handler: { [weak self] in
+                                self?.navigationController?.popViewController(animated: true)
+                            }
+                        )
+                        popup.show()
+                    }
                 } else {
-                    self?.view.makeToast("로그인 실패",position: .center)
+                    // 실패 처리
+                    if isOnSignUpSuccess {
+                        // 실패여도 성공 화면에 있다면 조용히 토스트만 (또는 유지)
+                        self?.view.makeToast("로그인 실패", position: .center)
+                    } else {
+                        self?.view.makeToast("로그인 실패", position: .center)
+                    }
                 }
+                
             }.store(in: &subscriptions)
     }
     
@@ -293,12 +337,14 @@ final class UserAuthViewController: UIViewController, ChildRightCloseNavigationB
     func setLastLoginTooltip() {
         let anchor: UIView
         switch Defaults.lastLoginType {
-        case SnsLoginType.apple.rawValue:
+        case AuthProvider.APPLE.rawValue:
             anchor = appleAnchor
-        case SnsLoginType.google.rawValue:
+        case AuthProvider.GOOGLE.rawValue:
             anchor = googleAnchor
-        case SnsLoginType.facebook.rawValue:
+        case AuthProvider.FACEBOOK.rawValue:
             anchor = facebookAnchor
+        case AuthProvider.LEZHIN.rawValue:
+            anchor = lezhinAnchor
         default:
             return
         }
@@ -411,6 +457,15 @@ final class UserAuthViewController: UIViewController, ChildRightCloseNavigationB
             make.centerX.equalTo(facebookLoginButton.snp.centerX)
             make.width.height.equalTo(1.0)
         }
+        
+        view.addSubview(facebookAnchor)
+        facebookAnchor.snp.makeConstraints { make in
+            // 버튼의 top, 버튼의 centerX 위치
+            make.top.equalTo(facebookLoginButton.snp.top).offset(12)
+            make.centerX.equalTo(facebookLoginButton.snp.centerX)
+            make.width.height.equalTo(1.0)
+        }
+        
     }
     
     @objc func closeButtonOnTapped(_ sender: Any) {
@@ -418,17 +473,11 @@ final class UserAuthViewController: UIViewController, ChildRightCloseNavigationB
     }
 
     @objc func lezhinLoginButtonOnTapped(_ sender: Any) {
-        onMain {
-            let popup = LZSnackAlertPopupView(
-                width: 320,
-                height: 222,
-                title: "레진 로그인",
-                message: "아직 미구현",
-                buttonTitle: "다시 시도하기",
-                handler: {  }
-            )
-            popup.show()
+        let vc = LezhinLoginWebViewController(environment: .dev)
+        vc.onLoginSuccess = { accessToken in
+            self.viewModel.requestLezhinLAuth(accessToken: accessToken)
         }
+        navigationController?.pushViewController(vc, animated: true)
     }
     
     @objc func googleLoginButtonOnTapped(_ sender: Any) {
@@ -440,17 +489,7 @@ final class UserAuthViewController: UIViewController, ChildRightCloseNavigationB
     }
     
     @objc func facebookLoginButtonOnTapped(_ sender: Any) {
-        onMain {
-            let popup = LZSnackAlertPopupView(
-                width: 320,
-                height: 222,
-                title: "페이스북 로그인",
-                message: "아직 미구현",
-                buttonTitle: "다시 시도하기",
-                handler: {  }
-            )
-            popup.show()
-        }
+        viewModel.requestFacebookAuth()
     }
     
     @IBAction func logoutButtonOnTapped(_ sender: Any) {

@@ -8,11 +8,13 @@
 
 
 struct EpisodeListEntity: Codable,Hashable {
-    let contentsID: Int
-    let episodeID: Int
+    let contentsID: String
+    let episodeID: String
     let episodeIndex: Int
     let isLocked: Bool
     let isEarlyAccess: Bool
-    
+    let contentsAlias: String
+    let episodeAlias: String
+     
     var isFirstEarlyAccess: Bool = false
 }

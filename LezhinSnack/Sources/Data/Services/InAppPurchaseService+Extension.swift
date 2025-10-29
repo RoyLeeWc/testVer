@@ -22,7 +22,8 @@ enum SubscriptionApiEndpoint {
     var path: String {
         switch self {
         case .subscribeReady:
-            return "/v1/app/subscription/ready"
+//            return "/v1/app/subscription/ready"
+            return "/app/payments"
         case .subscribeFinish:
             return "/v1/app/subscription/finish"
         case .subscriptionInquiry(let tradeId):
@@ -83,7 +84,7 @@ extension InAppPurchaseService {
 
     // MARK: - 4) 구독형 상품 구매 처리
     /// paymentInfo 내에 subscriptionProductId, userId, platform 등이 담겨 있다고 가정
-    func purchaseNewSubscription(paymentInfo: PaymentInfoDTO) async throws -> InAppPurchaseEntity {
+    func purchaseNewSubscription(paymentInfo: PurchaseUserContext) async throws -> InAppPurchaseEntity {
         // 1️⃣ 이미 미완료된 구독 트랜잭션이 있는지 확인
         if await isUnfinishedSubscriptionTransaction() {
             if isPurchasing {
@@ -103,12 +104,10 @@ extension InAppPurchaseService {
         // 3️⃣ 서버에 “구독 준비(reserve)” 요청
         let subscriptionReserveDTO = try await requestSubscriptionReserve(data: paymentInfo)
         
-        guard subscriptionReserveDTO.result == LZSConstant.ResponseSuccess,
-              let reserveData = subscriptionReserveDTO.data,
-              let userEmail = reserveData.userEmail,
-              let productID = reserveData.productCode,
-              let tradeId = reserveData.tradeId else {
-            throw PurchaseError.invalidSubscription
+        guard subscriptionReserveDTO.responseCode == LZSConstant.ResponseSuccess,
+              let productID = subscriptionReserveDTO.data?.productCode,
+              let tradeId = subscriptionReserveDTO.data?.tradeId else {
+            throw PurchaseError.invalidPayment
         }
         
         // 4️⃣ StoreKit 2: 해당 구독 상품 Product 객체 가져오기
@@ -164,18 +163,18 @@ extension InAppPurchaseService {
                 let error = NSError(domain: "PurchaseStoreKit2", code: 0, userInfo: [
                     NSLocalizedDescriptionKey: "Subscription finish is not success."
                 ])
-                InAppPurchaseService.shared.requestSubscriptionLog(
-                    userId: userEmail,
-                    tradeId: tradeId,
-                    receipt: error.localizedDescription
-                )
+//                InAppPurchaseService.shared.requestSubscriptionLog(
+//                    userId: userEmail,
+//                    tradeId: tradeId,
+//                    receipt: error.localizedDescription
+//                )
                 throw PurchaseError.networkResponseError(error)
             }
             
         case let .success(.unverified(transaction, error)):
             // 거래 검증 실패 시 로그
             InAppPurchaseService.shared.requestSubscriptionLog(
-                userId: Defaults.userId,
+                userId: "\(Defaults.userId)",
                 tradeId: tradeId,
                 receipt: error.localizedDescription + String(transaction.id)
             )
@@ -188,7 +187,7 @@ extension InAppPurchaseService {
         case .userCancelled:
             // 사용자가 구독 결제 화면을 취소
             await tradeHistoryService.removeMapping(
-                productID: reserveData.productCode ?? "",
+                productID: productID,
                 tradeID: tradeId
             )
             throw PurchaseError.userCancel
@@ -252,19 +251,32 @@ extension InAppPurchaseService {
     }
     
     // MARK: - 6) 구독 전용 서버 호출 함수들
-    func requestSubscriptionReserve(data: PaymentInfoDTO) async throws -> SubscriptionReserveDTO {
-        let header: HTTPHeaders = commonHeaders()
-        var param = commonParam()
+    func requestSubscriptionReserve(data: PurchaseUserContext) async throws -> AppPaymentReserveDTO {
+        
+        let header: HTTPHeaders = AppContext.shared.makeSnackAuthHeaders(includeUserId: true, includeBearer: true)
+        
+        let accessToken = Defaults.accessToken
+        //let countryCode = Defaults.
+        let ipAddress = AppContext.shared.deviceIPAddress
+
+        
+        var param: [String: Any] = [
+            "accessToken": accessToken,
+            "countryCode": "KR",
+            "ipAddress": ipAddress,
+            "languageType": "ko-KR",
+            "platform": "IOS",
+            "paymentMenuType": data.paymentMenuType,
+            "paymentProviderId": data.paymentProviderId,
+            "productId": data.productId
+        ]
+        
         
         let shouldProceed = await requestPurchaseReadyStateManager.shouldProceed()
         guard shouldProceed else {
             throw PurchaseError.alreadyRequestSubscription
         }
         defer { Task { await requestPurchaseReadyStateManager.finishedRequest() } }
-        
-        param["subscriptionProductId"] = data.coinProductId
-        param["accessToken"] = data.accessToken
-        param["platform"] = data.platform
         
         let response = await AF.request(
             SubscriptionApiEndpoint.subscribeReady.url,
@@ -274,7 +286,7 @@ extension InAppPurchaseService {
             headers: header
         )
         .validate()
-        .serializingDecodable(SubscriptionReserveDTO.self)
+        .serializingDecodable(AppPaymentReserveDTO.self)
         .response
         
         switch response.result {

@@ -15,7 +15,7 @@ final class WatchHistoryListViewController: UIViewController {
     }
     
     private var collectionView: UICollectionView!
-    private var dataSource: UICollectionViewDiffableDataSource<Section, WatchHistoryEntity>!
+    private var dataSource: UICollectionViewDiffableDataSource<Section, LastViewedContentItemEntity>!
     private var overlayEditView: UIView?
     
     
@@ -45,6 +45,7 @@ final class WatchHistoryListViewController: UIViewController {
     
     private var isEditingMode = false {
         didSet {
+            guard isEditingMode != oldValue else { return }  //  같은 값 재세팅 방지
             // 화면에 보이는 셀 모두에 편집 모드 플래그 전달
             collectionView.visibleCells
                 .compactMap { $0 as? HistoryCell }
@@ -65,10 +66,20 @@ final class WatchHistoryListViewController: UIViewController {
             
             isEditingMode ? showOverlayView() : hideOverlayView()
             floatingActionButton.isHidden = !isEditingMode
+            
+            // 편집모드 진입 시: 전체 로드 (isPaged=false)
+            if isEditingMode {
+                viewModel.enterEditMode()   // 전체(최초 1회) or 캐시 재사용
+                DispatchQueue.main.async { [weak self] in
+                    self?.clearSelectionsAndUI()
+                }
+            } else {
+                viewModel.exitEditMode()    // 호출 없음, 캐시 유지
+            }
         }
     }
     
-    private var items: [WatchHistoryEntity] = []
+    private var items: [LastViewedContentItemEntity] = []
         
     let viewModel: WatchHistoryViewModel
     
@@ -95,7 +106,22 @@ final class WatchHistoryListViewController: UIViewController {
     
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        isEditingMode = false
+        if isEditingMode { isEditingMode = false }
+    }
+    
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        guard !isEditingMode else { return }
+        
+        if let selected = collectionView.indexPathsForSelectedItems {
+            for indexPath in selected {
+                collectionView.deselectItem(at: indexPath, animated: true)
+                if let cell = collectionView.cellForItem(at: indexPath) as? HistoryCell {
+                    cell.isSelected = false
+                    cell.updateEditingMode() // 셀 UI 즉시 동기화
+                }
+            }
+        }
     }
     
     private func setupUI() {
@@ -106,19 +132,29 @@ final class WatchHistoryListViewController: UIViewController {
     }
     
     private func bind() {
-        viewModel.$watchHistory
-            .compactMap { $0 }
+        viewModel.$items
             .receive(on: RunLoop.main)
-            .sink { [weak self] historyArray in
+            .sink { [weak self] array in
                 guard let self else { return }
-                items.append(contentsOf: historyArray)
-                self.applySnapshot(items: items)
+                self.items = array
+                self.applySnapshot(items: array)
             }
             .store(in: &subscriptions)
+        
+        viewModel.$errorMessage
+            .compactMap { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] msg in
+                guard let self = self else { return }
+                let toast = LZSnackToastView(text: msg, showsIcon: false)
+                LZSnackToastHelper.showOnce(on: self.view, toast: toast, duration: 3.0)
+            }
+            .store(in: &subscriptions)
+        
     }
     
     private func initializeEmptySnapshot() {
-        var snapshot = NSDiffableDataSourceSnapshot<Section, WatchHistoryEntity>()
+        var snapshot = NSDiffableDataSourceSnapshot<Section, LastViewedContentItemEntity>()
         // 2) 섹션만 등록 (.main)
         snapshot.appendSections([.history])
         // 3) 아이템은 따로 append하지 않음 → 빈 상태
@@ -126,7 +162,22 @@ final class WatchHistoryListViewController: UIViewController {
     }
     
     private func fetchData() {
-        viewModel.fetchWatchHistory()
+        viewModel.loadInitial()
+    }
+    
+    private func clearSelectionsAndUI() {
+        // 선택 전부 해제
+        collectionView.indexPathsForSelectedItems?.forEach {
+            collectionView.deselectItem(at: $0, animated: false)
+        }
+        // 보이는 셀 UI 동기화
+        collectionView.visibleCells.compactMap { $0 as? HistoryCell }.forEach {
+            $0.isSelected = false
+            $0.updateEditingMode()
+        }
+        // 헤더 체크박스/버튼 상태 리셋
+        totalCheckBox?.setState(.unchecked)
+        updateFloatingActionButton()
     }
     
     private func configureFloatingButton() {
@@ -144,7 +195,7 @@ final class WatchHistoryListViewController: UIViewController {
     private func configureCollectionView() {
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: createLayout())
         collectionView.translatesAutoresizingMaskIntoConstraints = false
-        collectionView.allowsMultipleSelection = true
+        collectionView.allowsMultipleSelection = false
         
         collectionView.backgroundColor = UIColor(.backgroundDefault)
         // 커스텀 셀 등록
@@ -165,12 +216,12 @@ final class WatchHistoryListViewController: UIViewController {
         collectionView.delegate = self
         
         collectionView.addPullToRefresh { [weak self] in
-            self?.fetchData()
+            self?.viewModel.hardRefresh()
         }
     }
     
     private func configureEmptyContentLabel() {
-        emptyContentsLabel.text = "내목록_빈목록_타이틀".localized
+        emptyContentsLabel.text = "내목록_빈시청목록_타이틀".localized
         collectionView.backgroundView = emptyContentsLabel
     }
     
@@ -281,7 +332,7 @@ final class WatchHistoryListViewController: UIViewController {
     
     private func configureDataSource() {
         // Diffable Data Source 설정: 커스텀 셀 사용
-        dataSource = UICollectionViewDiffableDataSource<Section, WatchHistoryEntity>(collectionView: collectionView) { [weak self] collectionView, indexPath, item -> UICollectionViewCell? in
+        dataSource = UICollectionViewDiffableDataSource<Section, LastViewedContentItemEntity>(collectionView: collectionView) { [weak self] collectionView, indexPath, item -> UICollectionViewCell? in
             guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: HistoryCell.reuseIdentifier, for: indexPath) as? HistoryCell else { return nil }
             guard let self = self else { return nil }
             cell.isEditingMode = self.isEditingMode
@@ -314,9 +365,9 @@ final class WatchHistoryListViewController: UIViewController {
 
     }
     
-    private func applySnapshot(items: [WatchHistoryEntity]) {
+    private func applySnapshot(items: [LastViewedContentItemEntity]) {
         collectionView.refreshControl?.endRefreshing()
-        var snapshot = NSDiffableDataSourceSnapshot<Section, WatchHistoryEntity>()
+        var snapshot = NSDiffableDataSourceSnapshot<Section, LastViewedContentItemEntity>()
         snapshot.appendSections([.history])
         snapshot.appendItems(items)
         dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
@@ -333,7 +384,6 @@ extension WatchHistoryListViewController: UICollectionViewDelegate {
 
         if isEditingMode { return }
         // 이미 떠 있는 경우 먼저 제거
-        // 이미 떠 있는 경우 먼저 제거
         presentDropdownMenu(
             anchor: sender,
             menuWidth: max(sender.bounds.width, 120),
@@ -346,13 +396,19 @@ extension WatchHistoryListViewController: UICollectionViewDelegate {
     }
     
     private func applySort(_ option: WatchHistorySortOption) {
+        let newSort: ContentsListSort
         switch option {
         case .recent:
+            newSort = .recent
             print("최근 순으로 정렬")
         case .old:
+            newSort = .oldest
             print("오래된 순으로 정렬")
+        case .episodeUpdated:
+            newSort = .episodeUpdated
+            print("회차 업데이트 순으로 정렬")
         }
-        // 데이터 정렬 후 snapshot 갱신 …
+        viewModel.updateSort(newSort)
     }
 
     
@@ -374,25 +430,45 @@ extension WatchHistoryListViewController: UICollectionViewDelegate {
     }
     
     @objc func deleteSelectedItems() {
-        guard let selectedIndexPaths = collectionView.indexPathsForSelectedItems else { return }
-        let selectedItems = selectedIndexPaths.compactMap { dataSource.itemIdentifier(for: $0) }
-        items.removeAll(where: { selectedItems.contains($0) })
+        guard let indexPaths = collectionView.indexPathsForSelectedItems, !indexPaths.isEmpty else { return }
+        let selectedItems = indexPaths.compactMap { dataSource.itemIdentifier(for: $0) }
         
-        var snapshot = dataSource.snapshot()
-        snapshot.deleteItems(selectedItems)
-        viewModel.deleteWatchHistory(with: selectedItems)
+        // 인터랙션 잠깐 막기(옵션)
+        view.isUserInteractionEnabled = false
         
-        dataSource.apply(snapshot, animatingDifferences: true) { [weak self] in
+        viewModel.delete(items: selectedItems) { [weak self] success in
+            guard let self = self else { return }
+            self.view.isUserInteractionEnabled = true
             
-            self?.updateEmptyState()
-            
-            self?.isEditingMode = false
-            
-            let toastView = LZSnackToastView(text: "삭제가 완료되었습니다.", showsIcon: false)
-            LZSnackToastHelper.showOnce(on: self?.view, toast: toastView, duration: 2.0)
+            if success {
+                // 스냅샷 갱신 (ViewModel가 @Published items 갱신 → bind에서 applySnapshot 호출 중이면 생략 가능)
+                var snapshot = self.dataSource.snapshot()
+                snapshot.deleteItems(selectedItems)
+                self.dataSource.apply(snapshot, animatingDifferences: true) { [weak self] in
+                    self?.updateEmptyState()
+                    self?.isEditingMode = false
+                    self?.viewModel.hardRefresh()
+                    let toast = LZSnackToastView(text: "삭제가 완료되었습니다.", showsIcon: false)
+                    LZSnackToastHelper.showOnce(on: self?.view, toast: toast, duration: 2.0)
+                }
+            } else {
+                let toast = LZSnackToastView(text: "삭제에 실패했습니다.", showsIcon: false)
+                LZSnackToastHelper.showOnce(on: self.view, toast: toast, duration: 2.0)
+            }
         }
     }
+
     
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard viewModel.canPaginate else { return } // 캐시 모드면 여기서 컷
+        let offsetY = scrollView.contentOffset.y
+        let contentH = scrollView.contentSize.height
+        let visibleH = scrollView.bounds.height
+        if offsetY > contentH - visibleH - 400 {
+            let lastIndex = max(0, dataSource.snapshot().numberOfItems - 1)
+            viewModel.loadNextPageIfNeeded(currentIndex: lastIndex)
+        }
+    }
     // 셀 선택 처리
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         if isEditingMode {
@@ -402,14 +478,16 @@ extension WatchHistoryListViewController: UICollectionViewDelegate {
         } else {
             // 일반 모드일 땐 '탭' 이벤트로 처리
             collectionView.deselectItem(at: indexPath, animated: true)
-            let tappedItem = items[indexPath.item]
-            handleTap(on: tappedItem)
+            guard let item = dataSource.itemIdentifier(for: indexPath) else { return }
+            handleTap(on: item)
         }
     }
     
-    private func handleTap(on item: WatchHistoryEntity) {
-        guard let vc = AppContext.container.resolve(ViewerViewController.self,
-                                                             argument: ViewerType.mainViewer) else { return }
+    private func handleTap(on item: LastViewedContentItemEntity) {
+        let epAlias = String(item.lastViewedEpisodeNumber)
+        let playInput = PlayInput(contentsAlias: item.contentsAlias, episodeAlias: epAlias)
+        let route = ViewerRoute.main(playInput)
+        guard let vc = AppContext.container.resolve(ViewerViewController.self,arguments: ViewerType.mainViewer, route) else { return }
         navigationController?.pushHidesBottomBarViewController(vc, animated: true)
     }
     

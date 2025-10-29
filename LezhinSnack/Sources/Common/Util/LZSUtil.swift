@@ -14,6 +14,21 @@ import AVKit
 
 class LZSUtil {
     
+    static func dumpNSErrorChain(_ err: NSError, level: Int = 0) -> String {
+        let pad = String(repeating: "  ", count: level)
+        var s = "\(pad)• \(err.domain) (\(err.code)): \(err.localizedDescription)"
+        if let u = err.userInfo[NSUnderlyingErrorKey] as? NSError {
+            s += "\n" + dumpNSErrorChain(u, level: level + 1)
+        }
+        if let f = err.userInfo[NSLocalizedFailureReasonErrorKey] as? String {
+            s += "\n\(pad)  ↳ failureReason: \(f)"
+        }
+        if let d = err.userInfo[NSDebugDescriptionErrorKey] as? String {
+            s += "\n\(pad)  ↳ debug: \(d)"
+        }
+        return s
+    }
+    
     // 설정 -> 일반 -> 우선순위 언어중에 최상단 언어로 기본언어 설정
     static func getPrimaryLanguageCode() -> String {
         var primaryLanguageFromApple = "N/A"
@@ -210,6 +225,16 @@ class LZSUtil {
         }
     }
     
+    static func prettyJSONString(data: Data?) -> String {
+        guard let data = data else { return "<no-body>" }
+        if let obj = try? JSONSerialization.jsonObject(with: data),
+           let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
+           let s = String(data: pretty, encoding: .utf8) {
+            return s
+        }
+        return String(data: data, encoding: .utf8) ?? "<invalid-utf8>"
+    }
+    
     static func parsePrettyDictionary(dictionary: [String: Any]?) -> String {
         guard let dictionary = dictionary,
               let data = try? JSONSerialization.data(withJSONObject: dictionary, options: .prettyPrinted),
@@ -251,7 +276,7 @@ class LZSUtil {
     
     
     static func isNotGuestMode() -> Bool {
-        if Defaults.userLoginType != SnsLoginType.guestMode.rawValue {
+        if Defaults.userLoginType != AuthProvider.IOS_GUEST.rawValue {
             return true
         } else {
             return false
@@ -375,6 +400,34 @@ class LZSUtil {
         let green = CGFloat.random(in: 0...1)
         let blue = CGFloat.random(in: 0...1)
         return UIColor(red: red, green: green, blue: blue, alpha: 1.0)
+    }
+    
+    
+    public protocol AppClock {
+        var now: Date { get }
+    }
+
+    public struct SystemAppClock: AppClock {
+        public init() {}
+        public var now: Date { Date() }
+    }
+    
+    public enum EpisodePolicy {
+        /// 공개 시각이 지금으로부터 지난 24시간 이내인지 (Date 버전)
+        public static func isOpenedWithin24Hours(_ openedAt: Date,
+                                                 clock: AppClock = SystemAppClock()) -> Bool {
+            let elapsed = clock.now.timeIntervalSince(openedAt)
+            return elapsed >= 0 && elapsed <= 86_400
+        }
+        
+        /// 공개 시각이 지금으로부터 지난 24시간 이내인지 (epoch 초/밀리초 자동 처리)
+        public static func isOpenedWithin24Hours(epoch: Int64,
+                                                 clock: AppClock = SystemAppClock()) -> Bool {
+            let seconds = epoch > 9_999_999_999 ? TimeInterval(epoch) / 1000.0
+            : TimeInterval(epoch)
+            let openedAt = Date(timeIntervalSince1970: seconds)
+            return isOpenedWithin24Hours(openedAt, clock: clock)
+        }
     }
     
     

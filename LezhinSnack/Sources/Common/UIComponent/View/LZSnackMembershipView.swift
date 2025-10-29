@@ -90,6 +90,77 @@ final class LZSnackMembershipView: UIView {
         gradientLayer.frame = bounds
     }
     
+    func configure(state: LZSnackMembershipState, info: MySubscriptionInfoEntity?) {
+        // 공통 초기화
+        stateLabel.isHidden = false
+        stateLabel.backgroundColor = UIColor(.fillBrand)
+        stateLabel.textColor = .white
+        descriptionLabel.font = .pretendardRegular(size: 12)
+        descriptionLabel.textColor = UIColor(.foregroundSubtler)
+        
+        switch state {
+        case .neverSubscribed:
+            setupGradient()
+            bannerImageView.image = UIImage(named: "neverSubscribedBanner")
+            titleLabel.text = "월 3,900원으로"
+            descriptionLabel.text = "모든 콘텐츠 마음껏 감상하기"
+            descriptionLabel.font = .pretendardRegular(size: 14)
+            descriptionLabel.textColor = .white
+            stateLabel.isHidden = true
+            
+        case .monthlySubscriptionActive:
+            bannerImageView.image = UIImage(named: "monthlySubscribedBanner")
+            titleLabel.text = "멤버십_월간".localized
+            stateLabel.text = "멤버십_구독중".localized
+            descriptionLabel.text = nextPaymentText(info?.nextPaymentAt)
+            
+        case .monthlySubscriptionCancelled:
+            bannerImageView.image = UIImage(named: "monthlySubscribedBanner")
+            titleLabel.text = "멤버십_월간".localized
+            stateLabel.text = "멤버십_구독해지".localized
+            stateLabel.backgroundColor = UIColor(.fillDisabled)
+            stateLabel.textColor = UIColor(.foregroundSubtler)
+            descriptionLabel.text = endDateText(info?.endedAt)
+            
+        case .annualSubscriptionActive:
+            bannerImageView.image = UIImage(named: "annualSubscribedBanner")
+            titleLabel.text = "멤버십_연간".localized
+            stateLabel.text = "멤버십_구독중".localized
+            descriptionLabel.text = nextPaymentText(info?.nextPaymentAt)
+            
+        case .annualSubscriptionCancelled:
+            bannerImageView.image = UIImage(named: "annualSubscribedBanner")
+            titleLabel.text = "멤버십_연간".localized
+            stateLabel.text = "멤버십_구독해지".localized
+            stateLabel.backgroundColor = UIColor(.fillDisabled)
+            stateLabel.textColor = UIColor(.foregroundSubtler)
+            descriptionLabel.text = endDateText(info?.endedAt)
+        }
+        
+        titleLabel.sizeToFit()
+        stateLabel.sizeToFit()
+    }
+
+    private func endDateText(_ ms: Int64?) -> String {
+        let base = "멤버십_만료일".localized
+        guard let ms else { return "\(base): -" }
+        return "\(base): \(format(ms))"
+    }
+    
+    private func nextPaymentText(_ ms: Int64?) -> String {
+        let base = "멤버십_다음_결제일".localized
+        guard let ms else { return "\(base): -" }
+        return "\(base): \(format(ms))"
+    }
+    
+    private func format(_ ms: Int64) -> String {
+        let date = Date(timeIntervalSince1970: Double(ms) / 1000.0)
+        let f = DateFormatter()
+        f.locale = .current
+        f.timeZone = .current
+        f.dateFormat = "yyyy.MM.dd"
+        return f.string(from: date)
+    }
     
     private func setupUI(_ type: LZSnackMembershipState) {
         

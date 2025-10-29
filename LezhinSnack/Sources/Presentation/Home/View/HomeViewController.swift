@@ -35,7 +35,8 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
     private var collectionView: UICollectionView!
     private var dataSource: UICollectionViewDiffableDataSource<HomeSection, HomeSectionEntity>!
     
-    private var mainFooterView: UICollectionReusableView?
+    // 코디네이터 보관
+    var coordinator: HomeCoordinator?
     
     // 섹션별 아이템 배열 관리
     var sectionItems: [HomeSection: [HomeSectionEntity]] = [:]
@@ -52,7 +53,6 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        
         setupUI()
         bind()
         fetchData()
@@ -137,7 +137,7 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
             NotificationCenter.default.publisher(for: .LZSOriginalScrollDidBegin)
         )
         .receive(on: RunLoop.main)
-        .sink { [weak self] _ in self?.stopMainBannerAutoScroll() }
+        .sink { [weak self] _ in self?.stopOriginalAutoScroll() }
         .store(in: &subscriptions)
         
         Publishers.MergeMany(
@@ -145,7 +145,7 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
             NotificationCenter.default.publisher(for: .LZSOriginalScrollDidEnd)
         )
         .receive(on: RunLoop.main)
-        .sink { [weak self] _ in self?.startMainBannerAutoScroll() }
+        .sink { [weak self] _ in self?.startOriginalAutoScroll() }
         .store(in: &subscriptions)
         
         
@@ -160,7 +160,6 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
                     snapshot.appendSections([section])
                 }
                 dataSource.apply(snapshot, animatingDifferences: true) {
-                    self.viewModel.fetchSectionsData(sections: sections)
                 }
             }.store(in: &subscriptions)
         
@@ -171,42 +170,53 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
                 guard let self else { return }
                 updateSection(sectionData.section, with: sectionData.homeSectionEntityArray)
             }.store(in: &subscriptions)
+        
+        viewModel.onAllSectionsLoaded = { [weak self] in
+            guard let self else { return }
+            
+        }
+        
     }
     
     
     private func fetchData() {
-        collectionView.alpha = 0
-        setSkeletonOverlay()
-        onMainAfter(delay: 1) {
-            self.viewModel.fetchSectionList()
-        }
+//        collectionView.alpha = 0
+//        setSkeletonOverlay()
+//        onMainAfter(delay: 1) {
+//            self.viewModel.fetchSectionList()
+//        }
+        self.viewModel.fetchSectionList()
     }
     
     private func updateSection(_ section: HomeSection, with items: [HomeSectionEntity]) {
         var snapshot = dataSource.snapshot()
-        snapshot.appendItems(items, toSection: section)
-        if section.type == .mainBanner {
-            dataSource.apply(snapshot, animatingDifferences: true) { [weak self] in
-                self?.removeSkeletonOverlay()
-                self?.collectionView.refreshControl?.endRefreshing()
-            }
-            
-        } else {
-            dataSource.apply(snapshot, animatingDifferences: true) { [weak self] in
-                
-            }
+        // 섹션이 없으면 추가
+        if !snapshot.sectionIdentifiers.contains(section) {
+            snapshot.appendSections([section])
+        }
+
+        // 기존 아이템(플레이스홀더 포함) 전부 제거 후, 실데이터만 추가
+        let existing = snapshot.itemIdentifiers(inSection: section)
+        if !existing.isEmpty { snapshot.deleteItems(existing) }
+        if !items.isEmpty { snapshot.appendItems(items, toSection: section) }
+
+        
+        dataSource.apply(snapshot, animatingDifferences: true) { [weak self] in
+            guard let self else { return }
+            self.collectionView.refreshControl?.endRefreshing()
+            self.collectionView.layoutIfNeeded() //  레이아웃 확정
         }
     }
     
     // viewDidAppear에서 메인배너 섹션의 중간으로 스크롤하여 양쪽 무한 스크롤 느낌을 줌
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        startMainBannerAutoScroll()
+        startOriginalAutoScroll()
     }
     
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        stopMainBannerAutoScroll()
+        stopOriginalAutoScroll()
     }
     
     private func createLayout() -> UICollectionViewCompositionalLayout {
@@ -256,6 +266,7 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
                         for: indexPath) as? RankingHeaderView else {
                         return UICollectionReusableView()
                     }
+                    headerView.titleLabel.text = section?.headerTitle
                     return headerView
                 case .watchHistory:
                     guard let headerView = collectionView.dequeueReusableSupplementaryView(
@@ -273,6 +284,7 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
                         for: indexPath) as? OriginalHeaderView else {
                         return UICollectionReusableView()
                     }
+                    headerView.titleLabel.text = section?.headerTitle
                     return headerView
                 case .curation:
                     guard let headerView = collectionView.dequeueReusableSupplementaryView(
@@ -301,18 +313,23 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
                 }
                 
             case UICollectionView.elementKindSectionFooter:
-                // mainBanner 섹션에 대해서만 footer를 반환하고, 그 외에는 빈 뷰 반환
                 let section = self?.sections[indexPath.section]
                 if section?.type == .mainBanner {
                     guard let footerView = collectionView.dequeueReusableSupplementaryView(
                         ofKind: kind,
                         withReuseIdentifier: MainBannerFooterView.reuseIdentifier,
-                        for: indexPath) as? MainBannerFooterView else {
+                        for: indexPath
+                    ) as? MainBannerFooterView, let self, let section else {
                         return UICollectionReusableView()
                     }
+                    // ✅ 이 섹션의 "현재 아이템 개수"를 항상 최신으로 계산
+                    footerView.pageCountProvider = { [weak self] in
+                        guard let self else { return 0 }
+                        return self.dataSource.snapshot().itemIdentifiers(inSection: section).count
+                    }
+                    // 초기 인덱스 0 적용(모드 및 페이지 수 설정 + 인덱스 반영)
+                    footerView.updateCurrentIndex(0)
                     
-                    footerView.updateCurrentIndex(0, totalPages: 5)
-                    self?.mainFooterView = footerView
                     return footerView
                 }
                 
@@ -333,7 +350,29 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
                 return UICollectionViewCell()
             }
             
-            cell.configure(element)
+            if viewModel.payloadKindBySectionId[section.id] == .banner {
+                if let arr = viewModel.bannerEntitiesBySectionId[section.id],
+                   indexPath.item < arr.count {
+                    cell.configure(banner: arr[indexPath.item])
+                    return cell
+                }
+            } else if viewModel.payloadKindBySectionId[section.id] == .ongoing {
+                if let arr = viewModel.ongoingEntitiesBySectionId[section.id],
+                   indexPath.item < arr.count {
+                    cell.configure(ongoing: arr[indexPath.item])
+                    return cell
+                }
+            } else if viewModel.payloadKindBySectionId[section.id] == .ranking {
+                if let arr = viewModel.rankingEntitiesBySectionId[section.id],
+                   indexPath.item < arr.count {
+                    cell.configure(ranking: arr[indexPath.item])
+                    return cell
+                }
+            } else {
+                cell.configure(element)
+            }
+            
+//            cell.configure(element)
             return cell
             
         case .ranking:
@@ -341,8 +380,21 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
                 return UICollectionViewCell()
             }
             
-            let rank = indexPath.item + 1
-            cell.configure(element, rank: rank)
+            if viewModel.payloadKindBySectionId[section.id] == .ranking,
+               let arr = viewModel.rankingEntitiesBySectionId[section.id],
+               indexPath.item < arr.count {
+                let dto = arr[indexPath.item]
+                cell.configure(ranking: dto, rank: indexPath.item + 1)
+                return cell
+            } else if viewModel.payloadKindBySectionId[section.id] == .curation,
+                      let arr = viewModel.curationEntitiesBySectionId[section.id],
+                      indexPath.item < arr.count {
+                let dto = arr[indexPath.item]
+                cell.configure(curation: dto, rank: indexPath.item + 1)
+                return cell
+            } else {
+                cell.configure(element)
+            }
             return cell
             
         case .watchHistory:
@@ -351,7 +403,14 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
                 return UICollectionViewCell()
             }
             
-            cell.configure(element)
+            if viewModel.payloadKindBySectionId[section.id] == .lastWatch,
+               let arr = viewModel.lastWatchEntitiesBySectionId[section.id],
+               indexPath.item < arr.count {
+                cell.configure(lastWatch: arr[indexPath.item])
+                return cell
+            } else {
+                cell.configure(element)
+            }
             return cell
             
         case .original:
@@ -360,8 +419,27 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
                 return UICollectionViewCell()
             }
             
-            cell.configure(element)
-            cell.delegate = self
+            if viewModel.payloadKindBySectionId[section.id] == .ongoing,
+               let arr = viewModel.ongoingEntitiesBySectionId[section.id],
+               indexPath.item < arr.count {
+                cell.configure(ongoing: arr[indexPath.item])
+                cell.delegate = self
+                return cell
+            } else if viewModel.payloadKindBySectionId[section.id] == .curation,
+               let arr = viewModel.curationEntitiesBySectionId[section.id],
+               indexPath.item < arr.count {
+                cell.configure(curation: arr[indexPath.item])
+                cell.delegate = self
+                return cell
+            } else if viewModel.payloadKindBySectionId[section.id] == .banner,
+               let arr = viewModel.bannerEntitiesBySectionId[section.id],
+               indexPath.item < arr.count {
+                cell.configure(banner: arr[indexPath.item])
+                cell.delegate = self
+                return cell
+            } else {
+                cell.configure(element)
+            }
             return cell
             
         case .curation:
@@ -369,7 +447,24 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
                 return UICollectionViewCell()
             }
             
-            cell.configure(element)
+            if viewModel.payloadKindBySectionId[section.id] == .curation,
+               let arr = viewModel.curationEntitiesBySectionId[section.id],
+               indexPath.item < arr.count {
+                cell.configure(curation: arr[indexPath.item])
+                return cell
+            } else if viewModel.payloadKindBySectionId[section.id] == .ongoing,
+               let arr = viewModel.ongoingEntitiesBySectionId[section.id],
+               indexPath.item < arr.count {
+                cell.configure(ongoing: arr[indexPath.item])
+                return cell
+            } else if viewModel.payloadKindBySectionId[section.id] == .ranking,
+               let arr = viewModel.rankingEntitiesBySectionId[section.id],
+               indexPath.item < arr.count {
+                cell.configure(ranking: arr[indexPath.item])
+                return cell
+            } else {
+                cell.configure(element)
+            }
             return cell
             
         case .allContents:
@@ -377,11 +472,34 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
                 return UICollectionViewCell()
             }
             
-            cell.configure(element)
+            if viewModel.payloadKindBySectionId[section.id] == .ongoing,
+               let arr = viewModel.ongoingEntitiesBySectionId[section.id],
+               indexPath.item < arr.count {
+                cell.configure(ongoing: arr[indexPath.item])
+                return cell
+            } else if viewModel.payloadKindBySectionId[section.id] == .curation,
+               let arr = viewModel.curationEntitiesBySectionId[section.id],
+               indexPath.item < arr.count {
+                cell.configure(curation: arr[indexPath.item])
+                return cell
+            } else if viewModel.payloadKindBySectionId[section.id] == .ranking,
+               let arr = viewModel.rankingEntitiesBySectionId[section.id],
+               indexPath.item < arr.count {
+                cell.configure(ranking: arr[indexPath.item])
+                return cell
+            } else {
+                cell.configure(element)
+            }
             return cell
         case .serialize:
             return UICollectionViewCell()
         }
+    }
+    
+    // 외부에서 코디네이터 주입 + 바인딩
+    func attachCoordinator(_ coordinator: HomeCoordinator) {
+        self.coordinator = coordinator
+        coordinator.bind(viewModel)
     }
     
     private func setSkeletonOverlay() {
@@ -405,7 +523,7 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
         UIView.animate(withDuration: 0.25, animations: {
             overlay.alpha = 0
         }, completion: { _ in
-            // ③ 뷰 계층에서 제거
+            //  뷰 계층에서 제거
             overlay.removeFromSuperview()
             self.skeletonOverlay = nil
             
@@ -466,23 +584,29 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
         
         sectionLayout.boundarySupplementaryItems = [sectionFooter]
         
-        sectionLayout.visibleItemsInvalidationHandler = { [weak self] visibleItems, contentOffset, layoutEnvironment in
-            let containerWidth = layoutEnvironment.container.effectiveContentSize.width
+        sectionLayout.visibleItemsInvalidationHandler = { [weak self] visibleItems, contentOffset, env in
+            guard let self, let any = visibleItems.first else { return }
+            
+            let secIndex = any.indexPath.section
+            guard self.sections.indices.contains(secIndex),
+                  self.sections[secIndex].type == .mainBanner else { return }
+            let homeSection = self.sections[secIndex]
+            
+            let containerWidth = env.container.effectiveContentSize.width
             let centerX = contentOffset.x + containerWidth / 2
             
-            guard let centerItem = visibleItems.min(by: { abs($0.frame.midX - centerX) < abs($1.frame.midX - centerX) }) else {
-                return
-            }
+            // 화면 중앙에 가장 가까운 아이템 = 현재 페이지
+            let currentIndex = visibleItems.min(by: {
+                abs($0.frame.midX - centerX) < abs($1.frame.midX - centerX)
+            })?.indexPath.item ?? 0
             
-            let currentCenterIndex = centerItem.indexPath.item
-            let originalItemCount = 10
-            let relativeIndex = currentCenterIndex % originalItemCount
-            
-            onMain {
-                if let footer = self?.collectionView.visibleSupplementaryViews(ofKind: UICollectionView.elementKindSectionFooter)
-                    .first as? MainBannerFooterView {
-                    footer.updateCurrentIndex(relativeIndex,totalPages: originalItemCount)
-                }
+            // ✅ 해당 섹션의 footer만 찾아서 index만 전달
+            let footerIndexPath = IndexPath(item: 0, section: secIndex)
+            if let footer = self.collectionView.supplementaryView(
+                forElementKind: UICollectionView.elementKindSectionFooter,
+                at: footerIndexPath
+            ) as? MainBannerFooterView {
+                footer.updateCurrentIndex(currentIndex) // total은 footer가 provider로 조회
             }
         }
         
@@ -688,28 +812,28 @@ final class HomeViewController: UIViewController, HomeRootNavigationBarPresentab
 
 extension HomeViewController: UICollectionViewDelegate {
     
-    func startMainBannerAutoScroll(withOriginalAutoScroll: Bool = true ) {
-//        mainBannerAutoScrollTimer?.invalidate()
-//        mainBannerAutoScrollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-//            self?.scrollToNextMainBannerItem()
-//        }
-//        
-//        if withOriginalAutoScroll {
-//            originalAutoScrollTimer?.invalidate()
-//            originalAutoScrollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-//                self?.scrollToNextOriginalItem()
-//            }
-//        }
+    func startMainBannerAutoScroll( ) {
+        mainBannerAutoScrollTimer?.invalidate()
+        mainBannerAutoScrollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            self?.scrollToNextMainBannerItem()
+        }
     }
-
-    func stopMainBannerAutoScroll(withOriginalAutoScroll: Bool = true ) {
+    
+    func startOriginalAutoScroll() {
+        originalAutoScrollTimer?.invalidate()
+        originalAutoScrollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            self?.scrollToNextOriginalItem()
+        }
+    }
+    
+    func stopMainBannerAutoScroll() {
         mainBannerAutoScrollTimer?.invalidate()
         mainBannerAutoScrollTimer = nil
-        
-        if withOriginalAutoScroll {
-            originalAutoScrollTimer?.invalidate()
-            originalAutoScrollTimer = nil
-        }
+    }
+    
+    func stopOriginalAutoScroll() {
+        originalAutoScrollTimer?.invalidate()
+        originalAutoScrollTimer = nil
     }
 
     
@@ -736,12 +860,29 @@ extension HomeViewController: UICollectionViewDelegate {
         collectionView.scrollToItem(at: nextIndexPath, at: .centeredHorizontally, animated: true)
     }
     
+    // 현재 화면에 "보이는" 섹션 중에서, type이 일치하고 "가장 많은 아이템이 보이는" 섹션을 고름
+    private func targetVisibleSectionIndex(for type: HomeSectionType) -> Int? {
+        guard !sections.isEmpty else { return nil }
+        // 현재 보이는 인덱스패스들
+        let visible = collectionView.indexPathsForVisibleItems
+        // type 일치하는 섹션만 필터
+        let buckets = Dictionary(grouping: visible.filter { sections[$0.section].type == type }) { $0.section }
+        if let best = buckets.max(by: { $0.value.count < $1.value.count })?.key {
+            return best
+        }
+        // 화면에 안 보이면 첫 번째 섹션 fallback
+        return sections.firstIndex(where: { $0.type == type })
+    }
+    
     func scrollToNextOriginalItem() {
         // 오리지날 섹션 인덱스 추출
-        guard let mainBannerSectionIndex = sections.firstIndex(where: { $0.type == .original }) else { return }
+//        guard let mainBannerSectionIndex = sections.firstIndex(where: { $0.type == .original }) else { return }
+        
+        // 여러 original 섹션 중 "현재 보이는" 섹션을 우선 선택
+        guard let sectionIndex = targetVisibleSectionIndex(for: .original) else { return }
         
         // 오리지날 섹션에 속하는 현재 보이는 아이템의 인덱스들 필터링
-        let visibleIndexPaths = collectionView.indexPathsForVisibleItems.filter { $0.section == mainBannerSectionIndex }
+        let visibleIndexPaths = collectionView.indexPathsForVisibleItems.filter { $0.section == sectionIndex }
         let sortedVisibleIndexPaths = visibleIndexPaths.sorted { $0.item < $1.item }
         
         // 현재 보이는 아이템 중 첫 번째 인덱스를 기준으로 다음 아이템 결정
@@ -749,13 +890,13 @@ extension HomeViewController: UICollectionViewDelegate {
         var nextItem = currentIndexPath.item + 1
         
         // 현재 메인 배너 섹션의 전체 아이템 개수 확인
-        let currentItems = dataSource.snapshot().itemIdentifiers(inSection: sections[mainBannerSectionIndex])
+        let currentItems = dataSource.snapshot().itemIdentifiers(inSection: sections[sectionIndex])
         if nextItem >= currentItems.count {
             nextItem = 0  // 범위를 초과하면 첫 번째 아이템으로 순환
         }
         
         // 다음 아이템의 IndexPath 생성 후 스크롤
-        let nextIndexPath = IndexPath(item: nextItem, section: mainBannerSectionIndex)
+        let nextIndexPath = IndexPath(item: nextItem, section: sectionIndex)
         collectionView.scrollToItem(at: nextIndexPath, at: .centeredHorizontally, animated: true)
     }
     
@@ -763,17 +904,16 @@ extension HomeViewController: UICollectionViewDelegate {
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         handleInfiniteScroll(of: scrollView)
         updateNavigationBarBackground(by: scrollView)
-        startMainBannerAutoScroll()
     }
 
     // 스크롤 시작할대 자동 스크롤 종료
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-        stopMainBannerAutoScroll()
+        stopOriginalAutoScroll()
     }
 
     // 스크롤 감속이 완료
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        
+        startOriginalAutoScroll()
     }
 
     // MARK: 무한 스크롤
@@ -807,25 +947,8 @@ extension HomeViewController: UICollectionViewDelegate {
     
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         
-        let sectionType = sections[indexPath.section].type
-        
-        switch sectionType {
-            
-        case .mainBanner:
-            break
-        case .ranking:
-            break
-        case .watchHistory:
-            break
-        case .original:
-            break
-        case .curation:
-            break
-        case .allContents:
-            break
-        case .serialize:
-            break
-        }
+        let section = sections[indexPath.section]
+        viewModel.didSelect(section: section, index: indexPath.item) // VC는 이벤트만
     }
     
     
@@ -834,7 +957,7 @@ extension HomeViewController: UICollectionViewDelegate {
               let cell = collectionView.cellForItem(at: indexPath) as? OriginalCell else { return }
         
         if !cell.isAlreadyOpened {
-            stopMainBannerAutoScroll()
+            stopOriginalAutoScroll()
             let toastView = LZSnackToastView(text: "\(item.title)의 알림 설정이 완료되었습니다.")
             LZSnackToastHelper.showOnce(on: view, toast: toastView, duration: 2.0)
         }
@@ -848,7 +971,7 @@ extension HomeViewController: AllContentsHeaderViewDelegate, OriginalCellDelegat
     
     func tappedBottomButton(isAlreadyOpened: Bool, title: String) {
         if !isAlreadyOpened {
-            stopMainBannerAutoScroll()
+            stopOriginalAutoScroll()
             let toastView = LZSnackToastView(text: "\(title)의 알림 설정이 완료되었습니다.")
             LZSnackToastHelper.showOnce(on: view, toast: toastView, duration: 2.0)
         }

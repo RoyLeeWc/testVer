@@ -79,28 +79,31 @@ final class PaymentCell: UICollectionViewCell {
     
     func configure(_ item: PaymentHistoryEntity) {
         // 텍스트 세팅
-        titleLabel.text = item.title
-        
-        let randomBool = Bool.random()
-        
-        if item.isCoinProduct {
-            if randomBool {
-                titleLabel.text = "월간 구독"
-                priceLabel.text = "KRW 9,900"
-            } else {
-                titleLabel.text = "연간 구독"
-                priceLabel.text = "KRW 22,900"
+        if item.paymentMenuType == .subscriptionProduct {
+            switch item.periodType {
+            case .monthly: titleLabel.text = "월간 구독"
+            case .annual:  titleLabel.text = "연간 구독"
+            default:       titleLabel.text = "구독"
             }
         } else {
             titleLabel.text = "코인 충전"
-            priceLabel.text = "KRW 4,900"
         }
         
-        dateLabel.text = "2025.04.29"
-
+        // 가격 (예: "CNY 20,000")
+        priceLabel.text = MoneyFormatter.text(amount: item.amount, currency: item.currencyType)
+        
+        if item.createdAt > 0 {
+            let date = Date(timeIntervalSince1970: TimeInterval(item.createdAt) / 1000)
+            let df = DateFormatter()
+            df.dateFormat = "yyyy.MM.dd"
+            dateLabel.text = df.string(from: date)
+        } else {
+            dateLabel.text = "-"
+        }
+        
         titleLabel.setLineHeight(26)
         dateLabel.setLineHeight(16)
-
+        
         // 레이아웃 반영
         contentView.layoutIfNeeded()
     }

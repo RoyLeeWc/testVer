@@ -17,6 +17,8 @@ final class LZSConstant {
     static let ResponseSuccess = "SUCCESS"
     static let ResponseError = "ERROR"
     static let NotRegisteredUser = "NOT_REGISTERED_USER"
+    static let Unauthorized = "UNAUTHORIZED"
+    static let NotFoundUser = "NOT_FOUND_USER"
     
 }
 
@@ -71,6 +73,7 @@ enum AllContentsSortOption: String, CaseIterable, LZSnackSortOption {
 enum WatchHistorySortOption: String, CaseIterable, LZSnackSortOption {
     case recent = "컨텍스트메뉴_최신순"
     case old    = "컨텍스트메뉴_오래된순"
+    case episodeUpdated    = "컨텍스트메뉴_회차업데이트순"
 
     var displayName: String {
         rawValue.localized
@@ -81,6 +84,13 @@ enum MyCoinSortOption: String, CaseIterable, LZSnackSortOption {
     case total = "컨텍스트메뉴_전체순"
     case expired    = "컨텍스트메뉴_만료순"
 
+    var toFilter: CoinChargeFilter {
+        switch self {
+        case .total:   return .ALL
+        case .expired: return .EXPIRING
+        }
+    }
+    
     var displayName: String {
         rawValue.localized
     }

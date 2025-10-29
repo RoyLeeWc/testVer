@@ -18,7 +18,7 @@ final class WishListViewController: UIViewController {
     
     
     private var collectionView: UICollectionView!
-    private var dataSource: UICollectionViewDiffableDataSource<Section, WishListEntity>!
+    private var dataSource: UICollectionViewDiffableDataSource<Section, WishContentItemEntity>!
     private var overlayEditView: UIView?
     
     private var floatingActionButton: UIButton = {
@@ -69,10 +69,20 @@ final class WishListViewController: UIViewController {
             isEditingMode ? showOverlayView() : hideOverlayView()
             floatingActionButton.isHidden = !isEditingMode
             
+            if isEditingMode {
+                viewModel.enterEditMode()
+                // 데이터가 바뀐 뒤 한 프레임 후 선택/체크박스/버튼 초기화
+                DispatchQueue.main.async { [weak self] in
+                    self?.clearSelectionsAndUI()
+                }
+            } else {
+                clearSelectionsAndUI()
+                viewModel.exitEditMode()
+            }
         }
     }
     
-    var items: [WishListEntity] = []
+    var items: [WishContentItemEntity] = []
     
     let viewModel: WishListViewModel
     
@@ -98,7 +108,7 @@ final class WishListViewController: UIViewController {
     
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        isEditingMode = false
+        if isEditingMode { isEditingMode = false }
     }
     
     private func setupUI() {
@@ -109,19 +119,28 @@ final class WishListViewController: UIViewController {
     }
     
     private func bind() {
-        viewModel.$wishList
+        viewModel.$items
+            .receive(on: RunLoop.main)
+            .sink { [weak self] array in
+                guard let self else { return }
+                self.items = array
+                self.applySnapshot(items: array)
+            }
+            .store(in: &subscriptions)
+        
+        viewModel.$errorMessage
             .compactMap { $0 }
             .receive(on: RunLoop.main)
-            .sink { [weak self] wishList in
+            .sink { [weak self] msg in
                 guard let self else { return }
-                items.append(contentsOf: wishList)
-                self.applySnapshot(items: items)
+                let toast = LZSnackToastView(text: msg, showsIcon: false)
+                LZSnackToastHelper.showOnce(on: self.view, toast: toast, duration: 3.0)
             }
             .store(in: &subscriptions)
     }
     
     private func initializeEmptySnapshot() {
-        var snapshot = NSDiffableDataSourceSnapshot<Section, WishListEntity>()
+        var snapshot = NSDiffableDataSourceSnapshot<Section, WishContentItemEntity>()
         // 2) 섹션만 등록 (.main)
         snapshot.appendSections([.wish])
         // 3) 아이템은 따로 append하지 않음 → 빈 상태
@@ -129,7 +148,7 @@ final class WishListViewController: UIViewController {
     }
     
     private func fetchData() {
-        viewModel.fetchWishList()
+        viewModel.loadInitial()
     }
     
     private func configureFloatingButton() {
@@ -167,12 +186,12 @@ final class WishListViewController: UIViewController {
         
         collectionView.delegate = self
         collectionView.addPullToRefresh { [weak self] in
-            self?.fetchData()
+            self?.viewModel.hardRefresh()
         }
     }
     
     private func configureEmptyContentLabel() {
-        emptyContentsLabel.text = "내목록_빈목록_타이틀".localized
+        emptyContentsLabel.text = "내목록_빈찜한목록_타이틀".localized
         collectionView.backgroundView = emptyContentsLabel
     }
     
@@ -326,7 +345,7 @@ final class WishListViewController: UIViewController {
     
     private func configureDataSource() {
         // Diffable Data Source 설정: 커스텀 셀 사용
-        dataSource = UICollectionViewDiffableDataSource<Section, WishListEntity>(collectionView: collectionView) { [weak self] collectionView, indexPath, item -> UICollectionViewCell? in
+        dataSource = UICollectionViewDiffableDataSource<Section, WishContentItemEntity>(collectionView: collectionView) { [weak self] collectionView, indexPath, item -> UICollectionViewCell? in
             guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: WishCell.reuseIdentifier, for: indexPath) as? WishCell else { return nil }
             guard let self = self else { return nil }
             
@@ -358,9 +377,9 @@ final class WishListViewController: UIViewController {
         }
     }
     
-    private func applySnapshot(items: [WishListEntity]) {
+    private func applySnapshot(items: [WishContentItemEntity]) {
         collectionView.refreshControl?.endRefreshing()
-        var snapshot = NSDiffableDataSourceSnapshot<Section, WishListEntity>()
+        var snapshot = NSDiffableDataSourceSnapshot<Section, WishContentItemEntity>()
         snapshot.appendSections([.wish])
         snapshot.appendItems(items)
         dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
@@ -389,13 +408,19 @@ extension WishListViewController: UICollectionViewDelegate {
     }
     
     private func applySort(_ option: WatchHistorySortOption) {
+        let newSort: ContentsListSort
         switch option {
         case .recent:
+            newSort = .recent
             print("최근 순으로 정렬")
         case .old:
+            newSort = .oldest
             print("오래된 순으로 정렬")
+        case .episodeUpdated:
+            newSort = .episodeUpdated
+            print("회차 업데이트 순으로 정렬")
         }
-        // 데이터 정렬 후 snapshot 갱신 …
+        viewModel.updateSort(newSort)
     }
 
     
@@ -417,22 +442,52 @@ extension WishListViewController: UICollectionViewDelegate {
     }
     
     @objc func deleteSelectedItems() {
-        guard let selectedIndexPaths = collectionView.indexPathsForSelectedItems else { return }
-        let selectedItems = selectedIndexPaths.compactMap { dataSource.itemIdentifier(for: $0) }
-        items.removeAll(where: { selectedItems.contains($0) })
+        guard let indexPaths = collectionView.indexPathsForSelectedItems, !indexPaths.isEmpty else { return }
+        let selected = indexPaths.compactMap { dataSource.itemIdentifier(for: $0) }
         
-        var snapshot = dataSource.snapshot()
-        snapshot.deleteItems(selectedItems)
-        viewModel.deleteWishList(with: selectedItems)
-                
-        dataSource.apply(snapshot, animatingDifferences: true) { [weak self] in
-            self?.isEditingMode = false
+        view.isUserInteractionEnabled = false
+        viewModel.delete(items: selected) { [weak self] success in
+            guard let self else { return }
+            self.view.isUserInteractionEnabled = true
             
-            let toastView = LZSnackToastView(text: "삭제가 완료되었습니다.", showsIcon: false)
-            LZSnackToastHelper.showOnce(on: self?.view, toast: toastView,duration: 5.0)
-            
-            self?.updateEmptyState()
+            if success {
+                // 스냅샷에서도 제거 (바인딩으로도 갱신되지만 즉시 반영)
+                var snapshot = self.dataSource.snapshot()
+                snapshot.deleteItems(selected)
+                self.dataSource.apply(snapshot, animatingDifferences: true) { [weak self] in
+                    self?.updateEmptyState()
+                    self?.isEditingMode = false
+                    let toast = LZSnackToastView(text: "삭제가 완료되었습니다.", showsIcon: false)
+                    LZSnackToastHelper.showOnce(on: self?.view, toast: toast, duration: 2.0)
+                }
+            } else {
+                let toast = LZSnackToastView(text: "삭제에 실패했습니다.", showsIcon: false)
+                LZSnackToastHelper.showOnce(on: self.view, toast: toast, duration: 2.0)
+            }
         }
+    }
+    
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard viewModel.canPaginate else { return }
+        let offY = scrollView.contentOffset.y
+        let contentH = scrollView.contentSize.height
+        let visibleH = scrollView.bounds.height
+        if offY > contentH - visibleH - 400 {
+            let lastIndex = max(0, dataSource.snapshot().numberOfItems - 1)
+            viewModel.loadNextPageIfNeeded(currentIndex: lastIndex)
+        }
+    }
+    
+    private func clearSelectionsAndUI() {
+        collectionView.indexPathsForSelectedItems?.forEach {
+            collectionView.deselectItem(at: $0, animated: false)
+        }
+        collectionView.visibleCells.compactMap { $0 as? WishCell }.forEach {
+            $0.isSelected = false
+            $0.updateEditingMode()
+        }
+        totalCheckBox?.setState(.unchecked)
+        updateFloatingActionButton()
     }
     
     private func updateEmptyState() {
@@ -449,11 +504,27 @@ extension WishListViewController: UICollectionViewDelegate {
     
     // 셀 선택 처리
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        updateHeaderCheckbox()
-        updateFloatingActionButton()
+        if isEditingMode {
+            // 편집 모드일 땐 기존 셀렉션 로직
+            updateHeaderCheckbox()
+            updateFloatingActionButton()
+        } else {
+            // 일반 모드일 땐 '탭' 이벤트로 처리
+            collectionView.deselectItem(at: indexPath, animated: true)
+            guard let item = dataSource.itemIdentifier(for: indexPath) else { return }
+            handleTap(on: item)
+        }
+    }
+    
+    private func handleTap(on item: WishContentItemEntity) {
+        let playInput = PlayInput(contentsAlias: item.contentsAlias, episodeAlias: "")
+        let route = ViewerRoute.main(playInput)
+        guard let vc = AppContext.container.resolve(ViewerViewController.self,arguments: ViewerType.mainViewer, route) else { return }
+        navigationController?.pushHidesBottomBarViewController(vc, animated: true)
     }
     
     func collectionView(_ collectionView: UICollectionView, didDeselectItemAt indexPath: IndexPath) {
+        guard isEditingMode else { return }
         updateHeaderCheckbox()
         updateFloatingActionButton()
     }

@@ -11,15 +11,14 @@ import SnapKit
 
 //height160
 final class ContentsDetailParentHeader: UICollectionReusableView {
-    private let promotionView = LZSnackPromotionView(
-        type: .allCases.randomElement()!
-    )
+    private var promotionView: LZSnackPromotionView?
     
     override func prepareForReuse() {
         super.prepareForReuse()
         
         imageStackView.subviews.forEach { $0.removeFromSuperview() }
-        
+        promotionView?.removeFromSuperview()
+        promotionView = nil
     }
     
     private let imageStackView: UIStackView = {
@@ -60,20 +59,11 @@ final class ContentsDetailParentHeader: UICollectionReusableView {
     private func setupUI() {
         self.backgroundColor = UIColor(.clear)
         
-        
-        addSubview(promotionView)
-        promotionView.snp.makeConstraints { make in
-            make.leading.equalToSuperview()
-            make.top.equalToSuperview().inset(32)
-            make.height.equalTo(20)
-        }
-        
         addSubview(headerTitle)
         headerTitle.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
-            make.top.equalTo(promotionView.snp.bottom).offset(8)
+            make.top.equalToSuperview().inset(32)
         }
-        
         
         addSubview(headerSubTitle)
         headerSubTitle.snp.makeConstraints { make in
@@ -90,6 +80,41 @@ final class ContentsDetailParentHeader: UICollectionReusableView {
         }
         
     }
+    
+    // ✅ 외부에서 프로모션 타입을 주입
+    func setPromotionType(_ type: LZSnackPromotionViewType?) {
+        // 이전 것 제거
+        promotionView?.removeFromSuperview()
+        promotionView = nil
+        
+        // 타이틀 제약 재설정
+        headerTitle.snp.remakeConstraints { make in
+            make.leading.trailing.equalToSuperview()
+            if type == nil {
+                // 뱃지 없으면 최상단 32 고정
+                make.top.equalToSuperview().inset(32)
+            }
+        }
+        
+        guard let type else { return }
+        
+        let badge = LZSnackPromotionView(type: type)
+        addSubview(badge)
+        badge.snp.makeConstraints { make in
+            make.leading.equalToSuperview()
+            make.top.equalToSuperview().inset(32)
+            make.height.equalTo(20)
+        }
+        
+        // 타이틀은 뱃지 아래로
+        headerTitle.snp.remakeConstraints { make in
+            make.leading.trailing.equalToSuperview()
+            make.top.equalTo(badge.snp.bottom).offset(8)
+        }
+        
+        promotionView = badge
+    }
+    
     
     func addImageToStack(_ image: UIImage) {
         let imageView = UIImageView(image: image)

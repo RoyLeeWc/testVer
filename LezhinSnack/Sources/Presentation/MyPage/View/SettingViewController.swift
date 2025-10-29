@@ -408,12 +408,12 @@ final class SettingViewController: UIViewController, ChildNavigationBarPresentab
     }
     
     @objc private func tappedWithdrawContainerView() {
-        if Defaults.userLoginType == SnsLoginType.guestMode.rawValue {
+        if Defaults.userLoginType == AuthProvider.IOS_GUEST.rawValue {
             onMain { [weak self] in
                 let popup = LZSnackAlertPopupView(
                     width: 320,
                     height: 222,
-                    title: "로그인 아내",
+                    title: "로그인 안내",
                     message: "게스트 모드에서는 불가능한 메뉴 입니다.",
                     leftButtonTitle: "닫기",
                     leftHandler: { },

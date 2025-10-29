@@ -11,13 +11,23 @@ import SnapKit
 
 final class GenreCell: UICollectionViewCell {
     
-    private let thumbnailImageView: UIImageView = {
+    private var marksStackView: LZSnackBadgeStackView?
+    
+    private var thumbnailImageView: UIImageView = {
         let imageView = UIImageView()
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
         imageView.backgroundColor = UIColor(.darkGray333)
         return imageView
     }()
+    
+    let titleLabel: UILabel = {
+        let label = UILabel()
+        label.font = .systemFont(ofSize: 14, weight: .medium)
+        label.textColor = .white
+        return label
+    }()
+    
     
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -30,6 +40,19 @@ final class GenreCell: UICollectionViewCell {
     }
     
     
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        reset()
+    }
+    
+    func reset() {
+        // 이전 상태 정리
+        titleLabel.text = nil
+        thumbnailImageView.image = nil
+        marksStackView?.removeFromSuperview()
+        marksStackView = nil
+    }
+    
     private func setupUI() {
         
         isSkeletonable = true
@@ -40,12 +63,41 @@ final class GenreCell: UICollectionViewCell {
         }
         thumbnailImageView.roundCorners(cornerRadius: 4)
         
+        contentView.addSubview(titleLabel)
+        titleLabel.snp.makeConstraints { make in
+            make.leading.trailing.equalToSuperview()
+            make.top.equalTo(thumbnailImageView.snp.bottom).offset(4)
+        }
     }
     
- 
-    func configure(_ data: HomeSectionEntity) {
+    func configure(ongoing: ContentsOngoingItemEntity) {
         
-        let tagView = LZSnackBadgeStackView(types: [.top10, .new, .up])
+        if let urlStr = ongoing.coverImagePath, let url = URL(string: urlStr) {
+            thumbnailImageView.kf.setImage(with: url)
+        } else {
+            thumbnailImageView.image = nil
+        }
+        
+        if let ts = ongoing.contentsOpenedAt,LZSUtil.EpisodePolicy.isOpenedWithin24Hours(epoch: ts) {
+            let fullText = "새 에피소드 / \(ongoing.episodeAlias)화"
+            setTitleLabelTextColor(fullText)
+        }
+      
+        
+        // 1) 서버 순서 유지 + MarkType 기준 중복 제거 + 최대 3개만 노출(원하면 숫자 변경)
+        var seen = Set<MarkType>()
+        let uiTypes: [LZSnackBadgeType] = ongoing.marks
+            .filter { seen.insert($0.type).inserted }        // 중복 제거(순서 보존)
+            .compactMap { LZSnackBadgeType(mark: $0) }        // MarkEntity -> UI 타입
+            .prefix(3)                                        // <= 원하는 최대 개수
+            .map { $0 }
+        
+        showAnimatedGradientSkeleton(isPlaceholder: false)
+        
+        guard !uiTypes.isEmpty else { return }
+        
+        // 새 스택뷰 추가
+        let tagView = LZSnackBadgeStackView(types: uiTypes)
         thumbnailImageView.addSubview(tagView)
         tagView.snp.makeConstraints { make in
             make.top.equalToSuperview().offset(4)
@@ -53,8 +105,23 @@ final class GenreCell: UICollectionViewCell {
             make.height.equalTo(16)
         }
         
-        showAnimatedGradientSkeleton(isPlaceholder: data.isPlaceholder)
+        marksStackView = tagView
         
+    }
+    func configure(curation: ContentsCurationItemEntity) {
+        let titleImagUrl = URL(string: curation.contentsDetail?.coverImagePath ?? "")
+        thumbnailImageView.kf.setImage(with: titleImagUrl)
+        showAnimatedGradientSkeleton(isPlaceholder: false)
+    }
+    
+    func configure(ranking: ContentsRankingItemEntity) {
+        let titleImagUrl = URL(string: ranking.contentsDetail?.coverImagePath ?? "")
+        thumbnailImageView.kf.setImage(with: titleImagUrl)
+        showAnimatedGradientSkeleton(isPlaceholder: false)
+    }
+ 
+    func configure(_ data: HomeSectionEntity) {
+        showAnimatedGradientSkeleton(isPlaceholder: data.isPlaceholder)
     }
     
     func showAnimatedGradientSkeleton(isPlaceholder: Bool) {
@@ -65,4 +132,33 @@ final class GenreCell: UICollectionViewCell {
         }
     }
     
+    func setTitleLabelTextColor(_ text: String) {
+
+        // "/"를 기준으로 문자열을 분리 (앞뒤 공백 제거)
+        let components = text.components(separatedBy: "/").map { $0.trimmingCharacters(in: .whitespaces) }
+
+        guard components.count == 2 else {
+            // "/" 구분자로 나눌 수 없으면 기본 white 색상 적용 후 반환
+            let attributedText = NSAttributedString(string: text,
+                                                    attributes: [.foregroundColor: UIColor(.foregroundSubtler)])
+            titleLabel.attributedText = attributedText
+            return
+        }
+
+        // 분리한 텍스트 요소
+        let firstPart = components[0]        // "에피소드"
+        let secondPart = components[1]       // "episodeAlias화"
+
+        let resultAttributedText = NSMutableAttributedString()
+        
+
+        let firstAttributed = NSAttributedString(string: firstPart, attributes:[.foregroundColor: UIColor(.foregroundSubtler)])
+        resultAttributedText.append(firstAttributed)
+
+        let secondAttributed = NSAttributedString(string: " " + secondPart, attributes: [.foregroundColor: UIColor(.foregroundBrand)])
+        resultAttributedText.append(secondAttributed)
+
+        titleLabel.attributedText = resultAttributedText
+        
+    }
 }

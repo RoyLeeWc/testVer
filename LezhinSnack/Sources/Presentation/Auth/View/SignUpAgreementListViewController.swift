@@ -8,7 +8,7 @@
 import UIKit
 import SnapKit
 import Combine
-
+import SwiftyUserDefaults
 
 final class SignUpAgreementListViewController: UIViewController, ChildNavigationBarPresentable {
     
@@ -55,7 +55,37 @@ final class SignUpAgreementListViewController: UIViewController, ChildNavigation
     
     private var dataSource: UICollectionViewDiffableDataSource<Section, AgreementEntity>!
     private var snapshot = NSDiffableDataSourceSnapshot<Section, AgreementEntity>()
+    // 모달일 때 헤더 감추려면 false로 세팅
+    var showsChildNavBar: Bool = false
+    var onAgreementsAccepted: (([AgreementEntity]) -> Void)?
     
+    let welcomeTitleView: UIView =  {
+        let view = UIView()
+        view.backgroundColor = .clear
+        return view
+    }()
+    
+    let welcomeTitleLabel: UILabel = {
+        let label = UILabel()
+        label.font = UIFont.pretendardMedium(size: 24)
+        label.textColor = .white
+        label.numberOfLines = 1
+        label.lineBreakMode = .byTruncatingTail
+        label.isSkeletonable = true
+        label.text = "환영합니다!"
+        return label
+    }()
+    
+    let welcomeTitleScriptLabel: UILabel = {
+        let label = UILabel()
+        label.font = UIFont.pretendardRegular(size: 13)
+        label.textColor = UIColor(.whiteOpacity58)
+        label.numberOfLines = 1
+        label.lineBreakMode = .byTruncatingTail
+        label.isSkeletonable = true
+        label.text = "시작 전 약관에 동의하고, 지금 바로 에피소드를 감상해보세요."
+        return label
+    }()
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -67,9 +97,35 @@ final class SignUpAgreementListViewController: UIViewController, ChildNavigation
     
     
     func setupUI() {
-        setupChildNavigationBar()
-        childNavigationBar.delegate = self
-        childNavigationBar.titleLabel.text = "앱바_이용약관_타이틀".localized
+        if showsChildNavBar {
+            setupChildNavigationBar()
+            childNavigationBar.delegate = self
+            childNavigationBar.titleLabel.text = "앱바_이용약관_타이틀".localized
+            welcomeTitleView.isHidden = true
+        } else {
+            welcomeTitleView.isHidden = false
+            view.addSubview(welcomeTitleView)
+            welcomeTitleView.snp.makeConstraints { make in
+                make.leading.trailing.equalToSuperview().inset(16)
+                make.top.equalTo(view.safeAreaLayoutGuide.snp.top).offset(72)
+                make.height.equalTo(56)
+            }
+            
+            welcomeTitleView.addSubview(welcomeTitleLabel)
+            welcomeTitleLabel.snp.makeConstraints { make in
+                make.top.equalToSuperview().offset(0)
+                make.leading.trailing.equalToSuperview().inset(0)
+                make.height.equalTo(34)
+            }
+            welcomeTitleView.addSubview(welcomeTitleScriptLabel)
+            welcomeTitleScriptLabel.snp.makeConstraints { make in
+                make.top.equalTo(welcomeTitleLabel.snp.bottom).offset(0)
+            }
+            
+            floatingActionButton.setTitle("동의하고 시작하기", for: .normal)
+            floatingActionButton.backgroundColor = UIColor(.brandRed)
+            floatingActionButton.tintColor = UIColor(.white)
+        }
                 
         self.navigationController?.interactivePopGestureRecognizer?.delegate = self
         
@@ -79,7 +135,11 @@ final class SignUpAgreementListViewController: UIViewController, ChildNavigation
         collectionView.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview().inset(16)
             make.bottom.equalToSuperview()
-            make.top.equalTo(childNavigationBar.snp.bottom).offset(16)
+            if showsChildNavBar {
+                make.top.equalTo(childNavigationBar.snp.bottom).offset(16)
+            } else {
+                make.top.equalTo(welcomeTitleView.snp.bottom).offset(32)
+            }
         }
         
         collectionView.register(SignUpAgreementListCell.self)
@@ -112,7 +172,11 @@ final class SignUpAgreementListViewController: UIViewController, ChildNavigation
     }
     
     private func fetchData() {
-        viewModel.fetchAgreementList()
+        if showsChildNavBar {
+            viewModel.fetchAgreementList()
+        } else {
+            viewModel.welcomefetchAgreementList()
+        }
     }
     
     
@@ -132,6 +196,7 @@ final class SignUpAgreementListViewController: UIViewController, ChildNavigation
             cell.configure(with: agreementItem)
             cell.cellCheckBox.setState(agreementItem.isChecked ? .checked : .unchecked)
             cell.onDetailTap = { [weak self] in
+                self?.openAgreementDetail(for: agreementItem)
                 // cell의 인덱스로 리스트르 뷰컨트롤러에 주입시켜서 해당내용 추출
             }
             return cell
@@ -195,14 +260,73 @@ final class SignUpAgreementListViewController: UIViewController, ChildNavigation
         }
     }
     
+    private func areRequiredAgreementsSelected() -> Bool {
+        // 1) 전체 아이템 중 필수만 골라 ID 집합 만들기
+        let allItems = dataSource.snapshot().itemIdentifiers
+        let requiredIDs = Set(
+            allItems
+                .filter { $0.agreementType == .required }
+                .map { $0.id }
+        )
+        // 2) 현재 선택된(체크된) 아이템 ID 집합 만들기
+        let selectedIDs = Set(
+            (collectionView.indexPathsForSelectedItems ?? [])
+                .compactMap { dataSource.itemIdentifier(for: $0)?.id }
+        )
+        // 3) 필수 항목들이 전부 선택돼 있으면 true
+        return requiredIDs.isSubset(of: selectedIDs)
+    }
+
+    // (임시) 제목 키워드로 마케팅 식별. 스키마 확정되면 key/enum으로 교체 권장.
+    private func isMarketing(_ item: AgreementEntity) -> Bool {
+        let t = item.title.lowercased()
+        return t.contains("마케팅") || t.contains("프로모션") || t.contains("marketing") || t.contains("promotion")
+    }
+    
     @objc func nextButtonOnTapped() {
+        
+        guard areRequiredAgreementsSelected() else { return }
+        
         guard let selectedIndexPaths = collectionView.indexPathsForSelectedItems else { return }
         let selectedItems = selectedIndexPaths.compactMap { dataSource.itemIdentifier(for: $0) }
-        
         printX(selectedItems)
+
+        // 마케팅 동의 저장 (선택 + optional + 마케팅)
+        let agreeMarketing = selectedItems.contains { $0.agreementType == .optional && isMarketing($0) }
+        Defaults.isAgreeMarketing = agreeMarketing
         
-        let vc = SignUpSuccessViewController()
-        navigationController?.pushHidesBottomBarViewController(vc, animated: true)
+        if showsChildNavBar {
+            onAgreementsAccepted?(selectedItems)
+            let vc = SignUpSuccessViewController()
+            navigationController?.pushHidesBottomBarViewController(vc, animated: true)
+        } else {
+            onAgreementsAccepted?(selectedItems)
+            dismiss(animated: true)
+        }
+    }
+    private func openAgreementDetail(for item: AgreementEntity) {
+        // 제목 기반 라우팅 (스키마 확정 전 임시 매핑)
+        let lower = item.title.lowercased()
+        var title = item.title
+        var urlString: String?
+        
+        if lower.contains("서비스 이용약관") || lower.contains("terms") || lower.contains("policy") {
+            title = "서비스 이용약관"
+            urlString = "https://dev.lezhinsnack.com/ko/agreement/policy"
+        } else if lower.contains("개인정보") || lower.contains("privacy") {
+            title = "개인정보 처리방침"
+            urlString = "https://dev.lezhinsnack.com/ko/agreement/privacy" // 필요시 정확 URL로 교체
+        }
+        
+        guard let s = urlString, let url = URL(string: s) else { return }
+        let vc = AgreementDetailWebViewController(title: title, url: url)
+        
+        if let nav = self.navigationController {
+            // 프로젝트에서 사용하던 확장 메서드 유지
+            nav.pushHidesBottomBarViewController(vc, animated: true)
+        } else {
+            present(vc, animated: true) // 네비가 없을 때 대비
+        }
     }
 
 }

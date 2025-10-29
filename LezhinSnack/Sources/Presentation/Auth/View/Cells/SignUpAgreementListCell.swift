@@ -125,9 +125,9 @@ final class SignUpAgreementListCell: UICollectionViewCell {
         let typeText: String
         switch entity.agreementType {
         case .required:
-            typeText = " \("이용약관_필수_타이틀".localized)"
+            typeText = " (\("이용약관_필수_타이틀".localized))"
         case .optional:
-            typeText = " \("이용약관_선택_타이틀".localized)"
+            typeText = " (\("이용약관_선택_타이틀".localized))"
         }
 
         let fullString = title + typeText

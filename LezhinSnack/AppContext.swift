@@ -22,10 +22,8 @@ enum AppLocale: String {
 enum SnsLoginType: String {
     case google     = "google"
     case facebook   = "facebook"
-    case twitter    = "twitter"
-    case line       = "line"
     case apple      = "apple"
-    case etc        = "etc"
+    case lezhin     = "lezhin"
     case guestMode  = "apple_guest"
 }
 
@@ -47,19 +45,35 @@ class AppContext {
     let deviceModelName         = UIDevice.current.name
     lazy var deviceUniqueID     = LZSUtil.retrieveUniqueDeviceIdentifier()
     lazy var deviceIPAddress    = Defaults.ipAddress
-    lazy var guestModeId        = self.xBalconyId
+    
+    lazy var guestModeId        = self.snackId
     
     
     
     /// API 베이스 URL
     var baseApiUrl  = "https://dev.bomtoon.com"
     
+    var baseNewApiUrl  = "https://dev-api.lezhinsnack.com"
+//    var basePublicNewApiUrl  = "https://dev-api.lezhinsnack.com/public"
+    
     /// Flex 서버 베이스 URL
-    var flexApiUrl  = "https://dev-flex.bomtoon.com"
+    var flexApiUrl  = "https://dev-flex.lezhinsnack.com"
     
     var locale      = ""
     var xBalconyId  = "BOMTOON_COM"
+    
+#if PROD
+    var snackId  = "LEZHIN_SNACK"
+#elseif DEV
+    var snackId  = "LEZHIN_SNACK_DEV"
+#endif
+    
+    
+    
     let xPlatform   = "IOS_APP"
+    
+    let snackPlatform = "IOS"
+    
     
     let supportLanguages = [
         LanguageCode.english,
@@ -68,7 +82,7 @@ class AppContext {
         LanguageCode.simplifiedChinese
     ]
     
-    let isPrintAllApiLog = false
+    let isPrintAllApiLog = true
     
     let commonHeader: HTTPHeaders = {
         return [
@@ -78,15 +92,58 @@ class AppContext {
         ]
     }()
     
-//    let headerWithAccessToken: HTTPHeaders = {
-//        var headers: HTTPHeaders = [
-//            "Content-Type": "application/json",
-//            "x-balcony-id": "BOMTOON_COM",
-//            "x-platform": "IOS_APP"
-//        ]
-//        headers["Authorization"] = "Bearer \(Defaults.accessToken)"
-//        return headers
-//    }()
+    let postManTokenHeader: HTTPHeaders = {
+        var headers: HTTPHeaders = [
+            "SNACK-Language": "ko-KR",
+            "SNACK-Platform": "IOS",
+            "SNACK-Country": "KR",
+            "SNACK-IP": Defaults.ipAddress,
+            "SNACK-User-Id": "553"
+        ]
+        
+        let postmanToken =  "eyJhbGciOiJIUzM4NCJ9.eyJ1c2VySWQiOiJuTmdIeTBTSlFLU0t3WHNlaFMrUlhrSklkMEtNM3l4QTB6c3FWMG02ejVVPSIsInNuc0lkIjoiU1Rtd25yaHlRbmZpSCtwSjJGZ1VSKzh5VVpoZE9JTU5CNDlQRDkrVFg4QT0iLCJqb2luVHlwZSI6IkVDQ1pEWnRDeC92V2MwMUs3YjhIdEVQQ25IU3F4cVhlOFR6TjVTUXZvNm89Iiwic3ViIjoiNTUzIiwiaWF0IjoxNzUyNjYwNjQ4LCJleHAiOjE3ODQxOTY2NDh9._l4XsiDHkmljIbNgW5JekVyQDHGa8ptG5n0CffUs2VFV-j28wJb80lxOJ8vH8nK3"
+         headers["Authorization"] = "Bearer \(postmanToken)"
+        
+        return headers
+    }()
+    
+    /// SNACK 기본 4종 + (옵션) User-Id + (옵션) Authorization Bearer
+    func makeSnackAuthHeaders(includeUserId: Bool = true, includeBearer: Bool = true) -> HTTPHeaders {
+        var headers = makeSnackHeaders(userIdHeader: includeUserId ? Defaults.userId : nil)
+        if includeBearer, !Defaults.accessToken.isEmpty {
+            let postmanToken = Defaults.accessToken
+            headers["Authorization"] = "Bearer \(postmanToken)"
+        }
+        return headers
+    }
+    
+    func makeSnackHeaders(userIdHeader: Int? = nil, token: String? = nil) -> HTTPHeaders {
+            var headers: HTTPHeaders = [
+                "SNACK-Language": "ko-KR",
+                "SNACK-Platform": snackPlatform, // ex) "IOS"
+                "SNACK-Country": "KR",
+                "SNACK-IP": deviceIPAddress
+            ]
+            if let uid = userIdHeader{
+                headers["SNACK-User-Id"] = "\(uid)"
+            }
+        if let accessToken = token, !accessToken.isEmpty {
+            headers["Authorization"] = "Bearer \(accessToken)"
+        }
+            return headers
+        }
+    
+    func makeFullSnackHeaders(userIdHeader: String? = nil, token: String? = nil) -> HTTPHeaders {
+            var headers: HTTPHeaders = [
+                "SNACK-Language": "ko-KR",
+                "SNACK-Platform": snackPlatform, // ex) "IOS"
+                "SNACK-Country": "KR",
+                "SNACK-IP": deviceIPAddress,
+                "SNACK-User-Id":"\(Defaults.userId)",
+                "Authorization": "Bearer \(Defaults.accessToken)"
+            ]
+            return headers
+        }
     
     func makeHeaderWithAccessToken() -> HTTPHeaders {
         var headers: HTTPHeaders = [
@@ -196,10 +253,27 @@ class AppContext {
         injectRepository()
         injectUseCase()
         injectViewModel()
+        injectInteractor()
         injectViewController()
     }
 
     private func injectRepository() {
+        
+        // CustomerSupportRepository 등록
+        container.register(CustomerSupportRepositoryProtocol.self) { _ in
+            CustomerSupportRepository()
+        }
+        
+        // SubscriptionRepository 등록
+        container.register(SubscriptionRepositoryProtocol.self) { _ in
+            SubscriptionRepository()
+        }
+        
+        // ContentsRepository 등록
+        container.register(ContentsRepositoryProtocol.self) { _ in
+            ContentsRepository()
+        }
+        
         // AuthRepository 등록
         container.register(AuthRepositoryProtocol.self) { _ in
             AuthRepository()
@@ -239,9 +313,219 @@ class AppContext {
         container.register(EpisodeListRepositoryProtocol.self) { _ in
             EpisodeListRepository()
         }
+        
+        // AppVersionRepository 등록
+        container.register(AppVersionRepositoryProtocol.self) { _ in
+            AppVersionRepository()
+        }
+        
+        // CurationRepository 등록
+        container.register(CurationRepositoryProtocol.self) { _ in
+            CurationRepository()
+        }
+        
     }
-
+    // swiftlint:disable function_body_length
     private func injectUseCase() {
+        
+        
+        // ProductsUseCase 등록
+        container.register(ProductsUseCaseProtocol.self) { resolver in
+            let repo = resolver.resolveOrFail(InAppPurchaseRepositoryProtocol.self)
+            return ProductsUseCase(repository: repo)
+        }
+        
+        // IosTransactionUseCase 등록
+        container.register(IosTransactionUseCaseProtocol.self) { resolver in
+            let repo = resolver.resolveOrFail(InAppPurchaseRepositoryProtocol.self)
+            return IosTransactionUseCase(repository: repo)
+        }
+        
+        // IosTransactionUseCase 등록
+        container.register(IosTransactionUseCaseProtocol.self) { resolver in
+            let repo = resolver.resolveOrFail(InAppPurchaseRepositoryProtocol.self)
+            return IosTransactionUseCase(repository: repo)
+        }
+        
+        // PaymentProvidersUseCase 등록
+        container.register(PaymentProvidersUseCaseProtocol.self) { resolver in
+            let repo = resolver.resolveOrFail(InAppPurchaseRepositoryProtocol.self)
+            return PaymentProvidersUseCase(repository: repo)
+        }
+        
+        // AppPaymentReserveUseCase 등록
+        container.register(AppPaymentReserveUseCaseProtocol.self) { resolver in
+            let repo = resolver.resolveOrFail(InAppPurchaseRepositoryProtocol.self)
+            return AppPaymentReserveUseCase(repository: repo)
+        }
+        
+        // FAQUseCase 등록
+        container.register(FAQUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(CustomerSupportRepositoryProtocol.self)
+            return FAQUseCase(repository: contentsRepo)
+        }
+        
+        // NoticesUseCase 등록
+        container.register(NoticesUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(CustomerSupportRepositoryProtocol.self)
+            return NoticesUseCase(repository: contentsRepo)
+        }
+        
+        // DeletePurchasedViewedContentsUseCase 등록
+        container.register(DeletePurchasedViewedContentsUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(MyListRepositoryProtocol.self)
+            return DeletePurchasedViewedContentsUseCase(repository: contentsRepo)
+        }
+        
+        // DeleteWishViewedContentsUseCase 등록
+        container.register(DeleteWishViewedContentsUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(MyListRepositoryProtocol.self)
+            return DeleteWishViewedContentsUseCase(repository: contentsRepo)
+        }
+        
+        // DeleteLastViewedContentsUseCase 등록
+        container.register(DeleteLastViewedContentsUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(MyListRepositoryProtocol.self)
+            return DeleteLastViewedContentsUseCase(repository: contentsRepo)
+        }
+        
+        // LastViewedContentsMyListUseCase 등록
+        container.register(LastViewedMyListUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(MyListRepositoryProtocol.self)
+            return LastViewedMyListUseCase(repository: contentsRepo)
+        }
+
+        // FavoriteContentsMyListUseCase 등록
+        container.register(WishContentsMyListUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(MyListRepositoryProtocol.self)
+            return WishContentsMyListUseCase(repository: contentsRepo)
+        }
+        // PurchasedContentsMyListUseCase 등록
+        container.register(PurchasedContentsMyListUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(MyListRepositoryProtocol.self)
+            return PurchasedContentsMyListUseCase(repository: contentsRepo)
+        }
+        
+        // PaymentDetailUseCase 등록
+        container.register(PaymentDetailUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(HistoryRepositoryProtocol.self)
+            return PaymentDetailUseCase(repository: contentsRepo)
+        }
+        
+        // PaymentHistoryUseCase 등록
+        container.register(PaymentHistoryUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(HistoryRepositoryProtocol.self)
+            return PaymentHistoryUseCase(repository: contentsRepo)
+        }
+        
+        // CoinChargesUseCase 등록
+        container.register(CoinChargesUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(HistoryRepositoryProtocol.self)
+            return CoinChargesUseCase(repository: contentsRepo)
+        }
+        
+        // CoinUsageHistoryUseCase 등록
+        container.register(CoinUsageHistoryUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(HistoryRepositoryProtocol.self)
+            return CoinUsageHistoryUseCase(repository: contentsRepo)
+        }
+        
+        // MySubscriptionUseCase 등록
+        container.register(MySubscriptionUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(SubscriptionRepositoryProtocol.self)
+            return MySubscriptionUseCase(repository: contentsRepo)
+        }
+        
+        // WithdrawUseCase 등록
+        container.register(WithdrawUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(UserRepositoryProtocol.self)
+            return WithdrawUseCase(repository: contentsRepo)
+        }
+        // WithdrawalReasonsUseCase 등록
+        container.register(WithdrawalReasonsUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(UserRepositoryProtocol.self)
+            return WithdrawalReasonsUseCase(repository: contentsRepo)
+        }
+        
+        // UpdateNicknameUseCase 등록
+        container.register(UpdateNicknameUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(UserRepositoryProtocol.self)
+            return UpdateNicknameUseCase(repository: contentsRepo)
+        }
+        
+        // UserInfoUseCase 등록
+        container.register(UserInfoUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(UserRepositoryProtocol.self)
+            return UserInfoUseCase(repository: contentsRepo)
+        }
+        
+        // PurchasedEpisodesUseCase 등록
+        container.register(PurchasedEpisodesUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(ContentsRepositoryProtocol.self)
+            return PurchasedEpisodesUseCase(repository: contentsRepo)
+        }
+        
+        // UnlikeContentsUseCase 등록
+        container.register(TrackEpisodeViewUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(ContentsRepositoryProtocol.self)
+            return TrackEpisodeViewUseCase(repository: contentsRepo)
+        }
+        
+        // UnlikeContentsUseCase 등록
+        container.register(UnfavoriteContentsUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(ContentsRepositoryProtocol.self)
+            return UnfavoriteContentsUseCase(repository: contentsRepo)
+        }
+        
+        // UnlikeContentsUseCase 등록
+        container.register(FavoriteContentsUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(ContentsRepositoryProtocol.self)
+            return FavoriteContentsUseCase(repository: contentsRepo)
+        }
+        
+        // UnlikeContentsUseCase 등록
+        container.register(UnlikeContentsUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(ContentsRepositoryProtocol.self)
+            return UnlikeContentsUseCase(repository: contentsRepo)
+        }
+        
+        // LikeContentsUseCase 등록
+        container.register(LikeContentsUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(ContentsRepositoryProtocol.self)
+            return LikeContentsUseCase(repository: contentsRepo)
+        }
+        
+        // DisplayVideoUseCase 등록
+        container.register(DisplayVideoUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(ContentsRepositoryProtocol.self)
+            return DisplayVideoUseCase(repository: contentsRepo)
+        }
+        
+        // FetchContentsDetailUseCase 등록
+        container.register(FetchContentsDetailUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(ContentsRepositoryProtocol.self)
+            return FetchContentsDetailUseCase(repo: contentsRepo)
+        }
+        
+        // FetchEpisodeMetaUseCase 등록
+        container.register(FetchEpisodeMetaUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(ContentsRepositoryProtocol.self)
+            return FetchEpisodeMetaUseCase(repo: contentsRepo)
+        }
+        
+        // FetchPreviewRecommendationsUseCase 등록
+        container.register(FetchPreviewRecommendationsUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(ContentsRepositoryProtocol.self)
+            return FetchPreviewRecommendationsUseCase(repo: contentsRepo)
+        }
+        
+        // FetchContentsEpisodesUseCase 등록
+        container.register(FetchContentsEpisodesUseCaseProtocol.self) { resolver in
+            let contentsRepo = resolver.resolveOrFail(ContentsRepositoryProtocol.self)
+            return FetchContentsEpisodesUseCase(repo: contentsRepo)
+        }
+        
+        
         // AuthUseCase 등록
         container.register(AuthUseCaseProtocol.self) { resolver in
             let authRepository = resolver.resolveOrFail(AuthRepositoryProtocol.self)
@@ -286,42 +570,183 @@ class AppContext {
             return EpisodeListUseCase(episodeListRepository: episodeListRepository)
         }
         
-    }
+        // AppVersionUseCase 등록
+        container.register(AppVersionUseCaseProtocol.self) { resolver in
+            let repo = resolver.resolveOrFail(AppVersionRepositoryProtocol.self)
+            return AppVersionUseCase(repo: repo)
+        }
+        
+        // LoginUseCase 등록
+        container.register(LoginUseCaseProtocol.self) { resolver in
+            let repo = resolver.resolveOrFail(AuthRepositoryProtocol.self)
+            return LoginUseCase(authRepository: repo)
+        }
 
+        // SignupUseCase 등록
+        container.register(SignupUseCaseProtocol.self) { resolver in
+            let repo = resolver.resolveOrFail(AuthRepositoryProtocol.self)
+            return SignupUseCase(authRepository: repo)
+        }
+        // LogoutUseCase 등록
+        container.register(LogoutUseCaseProtocol.self) { resolver in
+            let repo = resolver.resolveOrFail(AuthRepositoryProtocol.self)
+            return LogoutUseCase(authLogoutRepository: repo)
+        }
+        
+        // CurationUseCase 등록
+        container.register(CurationUseCaseProtocol.self) { resolver in
+            let repo = resolver.resolveOrFail(CurationRepositoryProtocol.self)
+            return CurationUseCase(curationRepository: repo)
+        }
+        
+        // RankingUseCase 등록
+        container.register(RankingUseCaseProtocol.self) { resolver in
+            let repo = resolver.resolveOrFail(CurationRepositoryProtocol.self)
+            return RankingUseCase(rankingrepository: repo)
+        }
+        
+        // BannerUseCase 등록
+        container.register(BannerUseCaseProtocol.self) { resolver in
+            let repo = resolver.resolveOrFail(CurationRepositoryProtocol.self)
+            return BannerUseCase(bannerrepository: repo)
+        }
+        
+        // OngoingUseCase 등록
+        container.register(OngoingUseCaseProtocol.self) { resolver in
+            let repo = resolver.resolveOrFail(CurationRepositoryProtocol.self)
+            return OngoingUseCase(ongoingRepository: repo)
+        }
+        
+        // LastWatchUseCase 등록
+        container.register(LastWatchUseCaseProtocol.self) { resolver in
+            let repo = resolver.resolveOrFail(CurationRepositoryProtocol.self)
+            return LastWatchUseCase(lastWatchRepository: repo)
+        }
+        
+        // CurationContentsUseCase 등록
+        container.register(CurationContentsUseCaseProtocol.self) { resolver in
+            let repo = resolver.resolveOrFail(CurationRepositoryProtocol.self)
+            return CurationContentsUseCase(curationRepository: repo)
+        }
+    }
+    
     private func injectViewModel() {
+        
+        // CustomerSupportFAQListViewModel
+        container.register(CustomerSupportFAQDetailViewModel.self) { (resolver: Resolver, faqId: Int) in
+            let useCase = resolver.resolveOrFail(FAQUseCaseProtocol.self)
+            return CustomerSupportFAQDetailViewModel(useCase: useCase, faqId: faqId)
+        }
+        
+        // CustomerSupportFAQListViewModel 등록
+        container.register(CustomerSupportFAQListViewModel.self) { (resolver, items: [FaqEntity]) in
+//            let fqaUseCase = resolver.resolveOrFail(FAQUseCaseProtocol.self)
+            return CustomerSupportFAQListViewModel(items: items)
+        }
+        
+        // CustomerSupportViewModel 등록
+        container.register(CustomerSupportViewModel.self) { resolver in
+            let fqaUseCase = resolver.resolveOrFail(FAQUseCaseProtocol.self)
+            return CustomerSupportViewModel(useCase: fqaUseCase)
+        }
+        
+        // CustomerSupportNoticeListViewModel 등록
+        container.register(CustomerSupportNoticeListViewModel.self) { resolver in
+            let noticesUseCase = resolver.resolveOrFail(NoticesUseCaseProtocol.self)
+            return CustomerSupportNoticeListViewModel(useCase: noticesUseCase)
+        }
+        
+        // PaymentHistoryViewModel 등록
+        container.register(PaymentHistoryViewModel.self) { resolver in
+          
+            let historyUseCase = resolver.resolveOrFail(PaymentHistoryUseCaseProtocol.self)
+            let detailUseCase = resolver.resolveOrFail(PaymentDetailUseCaseProtocol.self)
+            
+            return PaymentHistoryViewModel(historyUseCase: historyUseCase, detailUseCase: detailUseCase)
+        }
+        
+        container.register(ViewerViewModel.self) { resolver in
+            let detailUseCase  = resolver.resolveOrFail(FetchContentsDetailUseCaseProtocol.self)
+            let epsUseCase     = resolver.resolveOrFail(FetchContentsEpisodesUseCaseProtocol.self)
+            let videoUseCase   = resolver.resolveOrFail(DisplayVideoUseCaseProtocol.self)
+            let likeUseCase    = resolver.resolveOrFail(LikeContentsUseCaseProtocol.self)
+            let unlikeUseCase  = resolver.resolveOrFail(UnlikeContentsUseCaseProtocol.self)
+            let favoriteContentsUseCase = resolver.resolveOrFail(FavoriteContentsUseCaseProtocol.self)
+            let unFavoriteContentsUseCase = resolver.resolveOrFail(UnfavoriteContentsUseCaseProtocol.self)
+            let trackEpisodeViewUseCase = resolver.resolveOrFail(TrackEpisodeViewUseCaseProtocol.self)
+            let purchasedEpisodesUseCase = resolver.resolveOrFail(PurchasedEpisodesUseCaseProtocol.self)
+            let previewUseCase = resolver.resolveOrFail(FetchPreviewRecommendationsUseCaseProtocol.self)
+            
+            return ViewerViewModel(fetchContentsDetailUseCase: detailUseCase, fetchEpisodesUseCase: epsUseCase, displayVideoUseCase: videoUseCase, likeContentsUseCase: likeUseCase, unlikeContentsUseCase: unlikeUseCase,favoriteUseCase: favoriteContentsUseCase, unfavoriteUseCase: unFavoriteContentsUseCase, trackEpisodeViewUseCase: trackEpisodeViewUseCase, purchasedEpisodesUseCase: purchasedEpisodesUseCase, previewRecommendationsUseCase: previewUseCase)
+        }
         
         // HomeViewModel 등록
         container.register(HomeViewModel.self) { resolver in
-            let fetchHomeSectionsUseCase = resolver.resolveOrFail(FetchHomeSectionsUseCaseProtocol.self)
-            return HomeViewModel(fetchHomeSectionsUseCase: fetchHomeSectionsUseCase)
+            
+            let curationUseCase = resolver.resolveOrFail(CurationUseCaseProtocol.self)
+            let rankingUseCase = resolver.resolveOrFail(RankingUseCaseProtocol.self)
+            
+            let bannerUseCase = resolver.resolveOrFail(BannerUseCaseProtocol.self)
+            let ongoingUseCase = resolver.resolveOrFail(OngoingUseCaseProtocol.self)
+            let lastWatchUseCase = resolver.resolveOrFail(LastWatchUseCaseProtocol.self)
+            let curationContentsUseCase = resolver.resolveOrFail(CurationContentsUseCaseProtocol.self)
+            
+            return HomeViewModel(curationUseCase: curationUseCase,
+                                 rankingUseCase: rankingUseCase,
+                                 bannerUseCase: bannerUseCase,
+                                 ongoingUseCase: ongoingUseCase,
+                                 lastWatchUseCase: lastWatchUseCase,
+                                 curationContentsUseCase: curationContentsUseCase
+            )
         }
         
         // MyPageViewModel 등록
         container.register(MyPageViewModel.self) { resolver in
             let authUseCase = resolver.resolveOrFail(AuthUseCaseProtocol.self)
             let userUseCase = resolver.resolveOrFail(UserUseCaseProtocol.self)
+            let logoutUseCase = resolver.resolveOrFail(LogoutUseCaseProtocol.self)
+            let updateNicknameUseCase = resolver.resolveOrFail(UpdateNicknameUseCaseProtocol.self)
+            let userInfoUseCase = resolver.resolveOrFail(UserInfoUseCaseProtocol.self)
+            let loginUseCase = resolver.resolveOrFail(LoginUseCaseProtocol.self)
+            let signupUseCase = resolver.resolveOrFail(SignupUseCaseProtocol.self)
+            let mySubscriptionUseCase = resolver.resolveOrFail(MySubscriptionUseCaseProtocol.self)
             
-            return MyPageViewModel(authUseCase: authUseCase, userUseCase: userUseCase)
+            return MyPageViewModel(userUseCase: userUseCase,
+                                   logoutUseCase: logoutUseCase,
+                                   updateNicknameUseCase: updateNicknameUseCase,
+                                   userInfoUseCase: userInfoUseCase,
+                                   signupUseCase: signupUseCase,
+                                   loginUseCase: loginUseCase,
+                                   mySubscriptionUseCase: mySubscriptionUseCase)
         }
 
         // ChargeHistoryViewModel 등록
         container.register(ChargeHistoryViewModel.self) { resolver in
-            let historyUseCase = resolver.resolveOrFail(HistoryUseCaseProtocol.self)
             let userUseCase = resolver.resolveOrFail(UserUseCaseProtocol.self)
+            let coinChargesUseCase = resolver.resolveOrFail(CoinChargesUseCaseProtocol.self)
+            let coinUsageHistoryUseCase = resolver.resolveOrFail(CoinUsageHistoryUseCaseProtocol.self)
             
-            return ChargeHistoryViewModel(historyUserCase: historyUseCase, userUseCase: userUseCase)
+            return ChargeHistoryViewModel(userUseCase: userUseCase,fetchCoinCharges: coinChargesUseCase,fetchCoinUsage: coinUsageHistoryUseCase)
         }
         
         // SplashViewModel 등록
         container.register(SplashViewModel.self) { resolver in
-            let authUseCase = resolver.resolveOrFail(AuthUseCaseProtocol.self)
-            return SplashViewModel(authUseCase: authUseCase)
+            
+            let appVersionUseCase = resolver.resolveOrFail(AppVersionUseCaseProtocol.self)
+            let loginUseCase = resolver.resolveOrFail(LoginUseCaseProtocol.self)
+            let signupUseCase = resolver.resolveOrFail(SignupUseCaseProtocol.self)
+            
+            return SplashViewModel(appVersionUseCase: appVersionUseCase, loginUseCase: loginUseCase, signupUseCase: signupUseCase)
+            
         }
         
         // UserAuthViewModel 등록
         container.register(UserAuthViewModel.self) { resolver in
-            let authUseCase = resolver.resolveOrFail(AuthUseCaseProtocol.self)
-            return UserAuthViewModel(authUseCase: authUseCase)
+            let login  = resolver.resolveOrFail(LoginUseCaseProtocol.self)
+            let signup = resolver.resolveOrFail(SignupUseCaseProtocol.self)
+            let logout = resolver.resolveOrFail(LogoutUseCaseProtocol.self)
+            
+            return UserAuthViewModel(loginUseCase: login, signupUseCase: signup, logoutUseCase: logout)
         }
         
         // SearchViewModel 등록
@@ -333,13 +758,18 @@ class AppContext {
         // InAppPurchaseViewModel 등록
         container.register(InAppPurchaseViewModel.self) { resolver in
             let inAppPurchaseUseCase = resolver.resolveOrFail(InAppPurchaseUseCaseProtocol.self)
-            return InAppPurchaseViewModel(inAppPurchaseUseCase: inAppPurchaseUseCase)
+            let productsUseCaseUseCase = resolver.resolveOrFail(ProductsUseCaseProtocol.self)
+            let paymentProvidersUseCaseUseCase = resolver.resolveOrFail(PaymentProvidersUseCaseProtocol.self)
+            
+            return InAppPurchaseViewModel(inAppPurchaseUseCase: inAppPurchaseUseCase, productsuseCase: productsUseCaseUseCase, paymentProvidersuseCase: paymentProvidersUseCaseUseCase)
         }
         
         // IAPBottomSheetViewModel 등록
         container.register(IAPBottomSheetViewModel.self) { resolver in
             let inAppPurchaseUseCase = resolver.resolveOrFail(InAppPurchaseUseCaseProtocol.self)
-            return IAPBottomSheetViewModel(inAppPurchaseUseCase: inAppPurchaseUseCase)
+            let productsUseCaseUseCase = resolver.resolveOrFail(ProductsUseCaseProtocol.self)
+            let paymentProvidersUseCaseUseCase = resolver.resolveOrFail(PaymentProvidersUseCaseProtocol.self)
+            return IAPBottomSheetViewModel(inAppPurchaseUseCase: inAppPurchaseUseCase, productsuseCase: productsUseCaseUseCase, paymentProvidersuseCase: paymentProvidersUseCaseUseCase)
         }
         
         // SettingViewModel 등록
@@ -350,32 +780,47 @@ class AppContext {
         // WithdrawViewModel 등록
         container.register(WithdrawViewModel.self) { resolver in
             let authUseCase = resolver.resolveOrFail(AuthUseCaseProtocol.self)
-            return WithdrawViewModel(authUseCase: authUseCase)
+            let withdrawalReasonsUseCase = resolver.resolveOrFail(WithdrawalReasonsUseCaseProtocol.self)
+            let withdrawUseCase = resolver.resolveOrFail(WithdrawUseCaseProtocol.self)
+            let mySubscriptionUseCase = resolver.resolveOrFail(MySubscriptionUseCaseProtocol.self)
+            let loginUseCase = resolver.resolveOrFail(LoginUseCaseProtocol.self)
+            let signupUseCase = resolver.resolveOrFail(SignupUseCaseProtocol.self)
+            
+            return WithdrawViewModel(withdrawalReasonsUseCase: withdrawalReasonsUseCase,
+                                     withdrawUseCase: withdrawUseCase,
+                                     mySubscriptionUseCase: mySubscriptionUseCase,
+                                     signupUseCase: signupUseCase,
+                                     loginUseCase: loginUseCase)
         }
         
         // PurchasedContentListViewModel 등록
         container.register(PurchasedContentListViewModel.self) { resolver in
-            let myListUseCase = resolver.resolveOrFail(MyListUseCaseProtocol.self)
-            return PurchasedContentListViewModel(useCase: myListUseCase)
+            let myListUseCase = resolver.resolveOrFail(PurchasedContentsMyListUseCaseProtocol.self)
+            let deleteUseCase = resolver.resolveOrFail(DeletePurchasedViewedContentsUseCaseProtocol.self)
+            return PurchasedContentListViewModel(useCase: myListUseCase, deleteUseCase: deleteUseCase)
         }
         
         // WishListViewModel 등록
         container.register(WishListViewModel.self) { resolver in
-            let myListUseCase = resolver.resolveOrFail(MyListUseCaseProtocol.self)
-            return WishListViewModel(useCase: myListUseCase)
+            let myListUseCase = resolver.resolveOrFail(WishContentsMyListUseCaseProtocol.self)
+            let deleteUseCase = resolver.resolveOrFail(DeleteWishViewedContentsUseCaseProtocol.self)
+            return WishListViewModel(useCase: myListUseCase, deleteUseCase: deleteUseCase)
         }
         
         // WatchHistoryViewModel 등록
         container.register(WatchHistoryViewModel.self) { resolver in
-            let myListUseCase = resolver.resolveOrFail(MyListUseCaseProtocol.self)
-            return WatchHistoryViewModel(useCase: myListUseCase)
+            let myListUseCase = resolver.resolveOrFail(LastViewedMyListUseCaseProtocol.self)
+            let deleteUseCase = resolver.resolveOrFail(DeleteLastViewedContentsUseCaseProtocol.self)
+            return WatchHistoryViewModel(useCase: myListUseCase, deleteUseCase: deleteUseCase)
         }
         
         
         // EpisodeListViewModel 등록
         container.register(EpisodeListViewModel.self) { resolver in
             let episodeListUseCase = resolver.resolveOrFail(EpisodeListUseCaseProtocol.self)
-            return EpisodeListViewModel(episodeListUseCase: episodeListUseCase)
+            let episodeMetaUseCase = resolver.resolveOrFail(FetchEpisodeMetaUseCaseProtocol.self)
+            
+            return EpisodeListViewModel(episodeListUseCase: episodeListUseCase,episodeDetailsCase: episodeMetaUseCase)
         }
         
         // SignUpAgreementListViewModel 등록
@@ -386,7 +831,83 @@ class AppContext {
         
     }
 
+    private func injectInteractor() {
+        
+        container.register(HomeViewerPrefetchInteractor.self) { resolver in
+            let detail   = resolver.resolveOrFail(FetchContentsDetailUseCaseProtocol.self)
+            let episodes = resolver.resolveOrFail(FetchContentsEpisodesUseCaseProtocol.self)
+            return HomeViewerPrefetchInteractor(contentsDetailUseCases: detail, contentsEpisodesCases: episodes)
+        }
+        
+    }
+    
     private func injectViewController() {
+        
+        
+
+        // injectViewController()
+        container.register(CustomerSupportFAQDetailViewController.self) { (resolver: Resolver, faqId: Int) in
+            
+            guard let vm = resolver.resolve(CustomerSupportFAQDetailViewModel.self, argument: faqId) else {
+                fatalError("CustomerSupportFAQDetailViewModel 초기화 실패")
+            }
+            
+            guard let vc = CustomerSupportFAQDetailViewController(viewModel: vm) else {
+                fatalError("CustomerSupportFAQDetailViewController 초기화 실패")
+            }
+            return vc
+        }
+        
+        /// CustomerSupportFAQCategoryViewController 등록
+        container.register(CustomerSupportFAQCategoryViewController.self) { (resolver, categories: [FaqCategoryEntity], faqs: [FaqEntity]) in
+            guard let vc = CustomerSupportFAQCategoryViewController(categories: categories, faqs: faqs) else {
+                fatalError("CustomerSupportFAQCategoryViewController 초기화 실패")
+            }
+            return vc
+        }
+        
+        // CustomerSupportFAQListViewController 등록
+        container.register(CustomerSupportFAQListViewController.self) { (resolver: Resolver, items: [FaqEntity], categoryName: String) in
+            let vm = CustomerSupportFAQListViewModel(items: items)
+//            let vm = resolver.resolveOrFail(CustomerSupportFAQListViewModel.self)
+            guard let vc = CustomerSupportFAQListViewController(viewModel: vm, categoryName: categoryName) else {
+                fatalError("CustomerSupportFAQListViewController 초기화 실패")
+            }
+            return vc
+        }
+        
+        // CustomerSupportNoticeDetailViewController 등록
+        container.register(CustomerSupportNoticeDetailViewController.self) { (resolver: Resolver, entity: NoticeEntity) in
+            guard let viewController = CustomerSupportNoticeDetailViewController(entity: entity) else {
+                fatalError("InAppPurchaseViewController 초기화 실패")
+            }
+            return viewController
+        }
+        
+        // CustomerSupportNoticeListViewController 등록
+        container.register(CustomerSupportNoticeListViewController.self) { resolver in
+            let vm = resolver.resolveOrFail(CustomerSupportNoticeListViewModel.self)
+            guard let viewController = CustomerSupportNoticeListViewController(viewModel: vm) else {
+                fatalError("HomeViewController 초기화 실패")
+            }
+            return viewController
+        }
+        
+        // CustomerSupportViewController 등록
+        container.register(CustomerSupportViewController.self) { resolver in
+            let vm = resolver.resolveOrFail(CustomerSupportViewModel.self)
+            guard let viewController = CustomerSupportViewController(viewModel: vm) else {
+                fatalError("HomeViewController 초기화 실패")
+            }
+            return viewController
+        }
+        
+        // TermsListViewController 등록
+        container.register(TermsListViewController.self) { resolver in
+            let viewController = TermsListViewController()
+            return viewController
+        }
+        
         // SplashViewController 등록
         container.register(SplashViewController.self) { resolver in
             let splashViewModel = resolver.resolveOrFail(SplashViewModel.self)
@@ -438,11 +959,34 @@ class AppContext {
             return viewController
         }
         
-        // ViewerViewController 등록
-        container.register(ViewerViewController.self) { (resolver: Resolver, viewerType: ViewerType) in
-            let vc = ViewerViewController(viewerType: viewerType)
-            return vc
+        // 1) 기본: route 한 개 (이미 있던 것 유지)
+        container.register(ViewerViewController.self) { (resolver: Resolver, route: ViewerRoute) in
+            let vm = resolver.resolveOrFail(ViewerViewModel.self)
+            return ViewerViewController(route: route, viewModel: vm)
         }
+
+        // 2) 호환: (ViewerType, PlayInput) → route로 변환해 위 등록 재사용
+        container.register(ViewerViewController.self) { (resolver: Resolver, type: ViewerType, input: PlayInput) in
+            let route: ViewerRoute = .main(input)
+            let vm = resolver.resolveOrFail(ViewerViewModel.self)
+            return ViewerViewController(route: route, viewModel: vm)
+        }
+
+        // 3) 호환: (ViewerType, ViewerRoute) → route만 사용 (type은 무시 or 일치검사)
+        container.register(ViewerViewController.self) { (resolver: Resolver, type: ViewerType, route: ViewerRoute) in
+            // (선택) 일치 검사: type과 route.viewerType이 다르면 assert/log
+            assert(type == route.viewerType, "ViewerType/ViewerRoute mismatch")
+            let vm = resolver.resolveOrFail(ViewerViewModel.self)
+            return ViewerViewController(route: route, viewModel: vm)
+        }
+
+        
+        // 라우트 기반 등록: VC는 항상 VM을 생성자 주입으로 받는다
+        container.register(ViewerViewController.self) { (resolver: Resolver, route: ViewerRoute) in
+            let vm = resolver.resolveOrFail(ViewerViewModel.self)   // 기존 등록 그대로 사용
+            return ViewerViewController(route: route, viewModel: vm)
+        }
+        
         
         // InAppPurchaseViewController 등록
         container.register(InAppPurchaseViewController.self) { (resolver: Resolver, currentCoinBalance: String) in
@@ -453,9 +997,9 @@ class AppContext {
             return viewController
         }
         
-        container.register(IAPBottomSheetViewController.self) { (resolver: Resolver, currentCoinBalance: String) in
+        container.register(IAPBottomSheetViewController.self) { (resolver: Resolver, requiredCoinBalance: String) in
             let inAppPurchaseViewModel = resolver.resolveOrFail(IAPBottomSheetViewModel.self)
-            guard let viewController = IAPBottomSheetViewController(viewModel: inAppPurchaseViewModel, currentCoinBalance: currentCoinBalance) else {
+            guard let viewController = IAPBottomSheetViewController(viewModel: inAppPurchaseViewModel, requiredCoinBalance: requiredCoinBalance) else {
                 fatalError("InAppPurchaseViewController 초기화 실패")
             }
             return viewController
@@ -507,7 +1051,9 @@ class AppContext {
         
         // PaymentHistoryViewController 등록
         container.register(PaymentHistoryViewController.self) { resolver in
-            let viewController = PaymentHistoryViewController()
+            let viewModel = resolver.resolveOrFail(PaymentHistoryViewModel.self)
+            let viewController = PaymentHistoryViewController(viewModel: viewModel)
+            
             return viewController
         }
         
@@ -554,7 +1100,7 @@ class AppContext {
         
     }
     
-    
+    // swiftlint:enable function_body_length
     func requestPushNotificationPermissions() {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
@@ -564,6 +1110,7 @@ class AppContext {
             }
             
             if granted {
+                Defaults.isAgreePushNotification = true
                 // 메인 스레드에서 디바이스 토큰 등록 요청
                 onMain {
                     UIApplication.shared.registerForRemoteNotifications()
@@ -571,6 +1118,7 @@ class AppContext {
                 
             } else {
                 print("푸시 권한 요청 거부")
+                Defaults.isAgreePushNotification = false
             }
         }
     }

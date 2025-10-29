@@ -16,13 +16,24 @@ final class RechargeHistoryViewController: UIViewController {
     }
     
     private var collectionView: UICollectionView!
-    private var dataSource: UICollectionViewDiffableDataSource<Section, CoinChargeHistoryEntity>!
+    private var dataSource: UICollectionViewDiffableDataSource<Section, CoinChargeEntity>!
     private var overlayEditView: UIView?
     
     private var currentCoinBalance = ""
     private var expiringWindowDays: String = ""
     
+    private var selectedSort: MyCoinSortOption = .total
+    
     weak var delegate: ChildCoinHistoryDelegate?
+    
+    private let emptyContentsLabel: UILabel = {
+        let label = UILabel()
+        label.font = .pretendardMedium(size: 14)
+        label.textColor = .white
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        return label
+    }()
     
     init(currentCoinBalance: String, expiringWindowDays: String) {
         self.currentCoinBalance = currentCoinBalance
@@ -50,6 +61,17 @@ final class RechargeHistoryViewController: UIViewController {
         delegate?.loadCoinChargeHistory()
     }
     
+    private func configureEmptyContentLabel() {
+        emptyContentsLabel.text = "내목록_빈시청목록_타이틀".localized
+        collectionView.backgroundView = emptyContentsLabel
+    }
+    
+    private func updateEmptyState() {
+        let itemCount = dataSource.snapshot().numberOfItems
+        collectionView.isHidden = false
+        collectionView.backgroundView?.isHidden = (itemCount != 0)
+    }
+    
     private func configureCollectionView() {
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: createLayout())
         collectionView.translatesAutoresizingMaskIntoConstraints = false
@@ -75,6 +97,7 @@ final class RechargeHistoryViewController: UIViewController {
             guard let self else { return }
             self.initializeEmptySnapshot()
             self.delegate?.reloadCoinChargeHistory()
+            
         }
         //collectionView.bounces = false
     }
@@ -105,8 +128,7 @@ final class RechargeHistoryViewController: UIViewController {
     }
     
     private func configureDataSource() {
-        // Diffable Data Source 설정: 커스텀 셀 사용
-        dataSource = UICollectionViewDiffableDataSource<Section, CoinChargeHistoryEntity>(collectionView: collectionView) { [weak self] collectionView, indexPath, item -> UICollectionViewCell? in
+        dataSource = UICollectionViewDiffableDataSource<Section, CoinChargeEntity>(collectionView: collectionView) { [weak self] collectionView, indexPath, item -> UICollectionViewCell? in
             guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: RechargeCell.reuseIdentifier, for: indexPath) as? RechargeCell else { return nil }
             
             cell.configure(item)
@@ -124,15 +146,17 @@ final class RechargeHistoryViewController: UIViewController {
             
             guard let self else { return UICollectionReusableView()}
             headerView.setCoinInfoViewText(setCoinText: self.currentCoinBalance, expiredCoinText: self.expiringWindowDays)
+            headerView.updateSortTitle(self.selectedSort)
             headerView.delegate = self
             
             return headerView
             
         }
+        collectionView.delegate = self  //  페이지네이션용
     }
     
     private func initializeEmptySnapshot() {
-        var snapshot = NSDiffableDataSourceSnapshot<Section, CoinChargeHistoryEntity>()
+        var snapshot = NSDiffableDataSourceSnapshot<Section, CoinChargeEntity>()
         snapshot.appendSections([.history])
         snapshot.appendItems([])
         dataSource.apply(snapshot, animatingDifferences: true)
@@ -145,13 +169,13 @@ final class RechargeHistoryViewController: UIViewController {
         ) as? MyCoinCommonHeader
     }
     
-    func applySnapshot(items: [CoinChargeHistoryEntity] = []) {
+    func applySnapshot(items: [CoinChargeEntity]) {
         collectionView.refreshControl?.endRefreshing()
-        var snapshot = NSDiffableDataSourceSnapshot<Section, CoinChargeHistoryEntity>()
+        var snapshot = NSDiffableDataSourceSnapshot<Section, CoinChargeEntity>()
         snapshot.appendSections([.history])
         snapshot.appendItems(items)
-        dataSource.apply(snapshot, animatingDifferences: true) { [weak self] in
-            //self?.updateEmptyState()
+        dataSource.apply(snapshot, animatingDifferences: true){ [weak self] in
+            self?.updateEmptyState()
         }
     }
     
@@ -164,11 +188,12 @@ extension RechargeHistoryViewController: MyCoinCommonHeaderDelegate {
         presentDropdownMenu(
             anchor: anchor,
             menuWidth: 120,
-            current: MyCoinSortOption.total
+            current: selectedSort
         ) { [weak self] option in
             guard let self = self else { return }
             header.updateSortTitle(option)
             self.applySort(option)
+            self.delegate?.changeChargeFilter(option.toFilter)
         }
     }
     
@@ -176,8 +201,17 @@ extension RechargeHistoryViewController: MyCoinCommonHeaderDelegate {
     private func applySort(_ option: MyCoinSortOption) {
         switch option {
         case .total:    print("전체 순")
+            
         case .expired:  print("만료 순")
         }
         // 데이터 정렬 후 snapshot 갱신 …
+    }
+}
+
+extension RechargeHistoryViewController: UICollectionViewDelegate {
+    func collectionView(_ collectionView: UICollectionView,
+                        willDisplay cell: UICollectionViewCell,
+                        forItemAt indexPath: IndexPath) {
+        delegate?.loadMoreCoinChargesIfNeeded(visibleIndex: indexPath.item) // 다음 페이지 판단은 VM에서
     }
 }

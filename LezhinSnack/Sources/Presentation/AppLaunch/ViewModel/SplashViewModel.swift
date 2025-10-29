@@ -10,6 +10,13 @@ import SwiftyUserDefaults
 import UIKit
 import Toast
 
+protocol SplashViewModelDelegate: AnyObject {
+    /// 강제 업데이트 안내
+    func showRequisiteUpdate(title: String, message: String, downloadURL: String, version: String)
+    /// 권장 업데이트 안내
+    func showOptionalUpdate(title: String, message: String, downloadURL: String, version: String)
+}
+
 class SplashViewModel {
     
     deinit {
@@ -17,60 +24,113 @@ class SplashViewModel {
     }
     
     @Published var isLoginProcessOver: Bool?
+    @Published var isAppVerCheckProcessOver: Bool?
     
-    private let authUseCase: AuthUseCaseProtocol
+ 
+    private let loginUseCase: LoginUseCaseProtocol
+    private let appVersionUseCase: AppVersionUseCaseProtocol
+    private let signupUseCase: SignupUseCaseProtocol
     
-    init(authUseCase: AuthUseCaseProtocol) {
-        self.authUseCase = authUseCase
+    
+    weak var delegate: SplashViewModelDelegate?
+    
+    init(appVersionUseCase: AppVersionUseCaseProtocol, loginUseCase: LoginUseCaseProtocol, signupUseCase: SignupUseCaseProtocol) {
+        
+        self.appVersionUseCase = appVersionUseCase
+        self.loginUseCase = loginUseCase
+        self.signupUseCase = signupUseCase
     }
     
     func requestLogin() {
-//        isLoginProcessOver = true
-        if Defaults.userLoginType != SnsLoginType.guestMode.rawValue {
-            requestLoginWithLastLoginData()
+        if Defaults.userLoginType != AuthProvider.IOS_GUEST.rawValue {
+            isLoginProcessOver = true
         } else {
             requestGuestModeLogin()
         }
     }
     
-    func requestGuestModeLogin() {
+    func requestAppVerCheck() {
         LZSnackConcurrencyManager.run { [weak self] in
-            try await self?.authUseCase.executeGuestLogin()
-            self?.isLoginProcessOver = true
-        } onError: { [weak self] error in
-            let message = "게스트 모드 로그인에 실패 했습니다."
-            self?.isLoginProcessOver = true
-        }
-    }
-    
-    
-    func requestLoginWithLastLoginData() {
-        LZSnackConcurrencyManager.run { [weak self] in
-            try await self?.authUseCase.executeLoginWithLastData()
-            self?.isLoginProcessOver = true
-        } onError: { [weak self] error in
-            self?.requestGuestModeLoginFaildWidthLastLogin()
-        }
-    }
-    
-    func requestGuestModeLoginFaildWidthLastLogin() {
-        LZSnackConcurrencyManager.run { [weak self] in
-            try await self?.authUseCase.executeGuestLogin()
-            let message = "게스트 모드 로그인에 실패 했습니다."
-            self?.isLoginProcessOver = true
+            guard let self else { return }
+            let current = LZSUtil.getAppVersion()
             
+            let dto = try await self.appVersionUseCase.executeCheck(currentVersion: current)
+            
+            // UI 이벤트는 메인에서
             await MainActor.run {
+                guard let data = dto?.data else {
+                    return }
                 
-                let popup = LZSnackAlertPopupView(
-                    width: 320,
-                    height: 222,
-                    title: "[4개국어 언어 적용 요망] 이전에 로그인 한 회원정보로 로그인에 실패 했습니다.",
-                    message: "\n로그인 타입 : \(Defaults.userLoginType)\n로그인 이메일 : \(Defaults.userEmail)",
-                    buttonTitle: "다시 시도하기",
-                    handler: {  }
-                )
-                popup.show()
+                if data.isForceUpdate ?? false {
+                    self.delegate?.showRequisiteUpdate(
+                        title: data.title ?? "",
+                        message: data.description ?? "",
+                        downloadURL: data.downloadUrl ?? "",
+                        version: data.version ?? ""
+                    )
+                    return
+                }
+                
+                if data.isNewAppVersion ?? false {
+                    self.delegate?.showOptionalUpdate(
+                        title: data.title ?? "",
+                        message: data.description ?? "",
+                        downloadURL: data.downloadUrl ?? "",
+                        version: data.version ?? ""
+                    )
+                }
+                self.isAppVerCheckProcessOver = true
             }
+        } onError: { _ in
+            // 실패는 통과 정책이면 아무 것도 안 함
+        }
+    }
+    
+    // 2) 로그인 공통 함수
+    func loginGuest(with guestId: String) {
+        LZSnackConcurrencyManager.run { [weak self] in
+            guard let self else { return }
+            try await self.loginUseCase.executeLogin(
+                provider: .IOS_GUEST,   //
+                email: "",
+                token: guestId
+            )
+            await MainActor.run { self.isLoginProcessOver = true }
+        } onError: { [weak self] error in
+            self?.isLoginProcessOver = false
+        }
+    }
+    
+    
+    func requestGuestModeLogin() {
+        if !Defaults.isGuestSignUpStatus {
+            LZSnackConcurrencyManager.run { [weak self] in
+                try await self?.signupUseCase.executeSignup(provider: .IOS_GUEST,
+                                                            email: "",
+                                                            token: LZSUtil.retrieveUniqueDeviceIdentifier(),
+                                                            pid: UIDevice.current.identifierForVendor?.uuidString ?? "",
+                                                            isAgreeMarketing: Defaults.isAgreeMarketing,
+                                                            isAgreePushNotification: Defaults.isAgreePushNotification,
+                                                            guestId: nil)
+                // 가입 성공 → 로그인
+                await MainActor.run {
+                    Defaults.isGuestSignUpStatus = true
+                    self?.loginGuest(with: Defaults.guestModeId)
+                    
+                }
+            } onError: { [weak self] error in
+                guard let self else { return }
+                // 서버가 던진 코드가 DUPLICATE_USER면 이미 가입된 사용자 → 로그인 시도
+                if case let AuthRepositoryError.api(code, _) = error, code == "DUPLICATE_USER" || code == "NOT_FOUND_USER"{
+                    loginGuest(with: Defaults.guestModeId)
+                } else {
+                    self.isLoginProcessOver = false
+                    Defaults.guestModeId = ""
+                    Defaults.isGuestSignUpStatus = false
+                }
+            }
+        } else {
+            loginGuest(with: Defaults.guestModeId)
         }
     }
 }

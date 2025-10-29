@@ -9,7 +9,7 @@ import Foundation
 
 
 struct AuthEntity: Codable {
-    let userId: String
+    let userId: Int
     let email: String
     let accessToken: String
     let refreshToken: String

@@ -125,6 +125,19 @@ final class OriginalCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         fatalError("init(coder:)는 지원하지 않습니다. 코드 기반으로 구현해 주세요.")
     }
     
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        reset()
+    }
+    
+    func reset() {
+        // 이전 상태 정리
+        mainImageView.image = nil
+        title = ""
+        titleImageView.image = nil
+        scriptLabel.text = ""
+        
+    }
     override func layoutSubviews() {
         super.layoutSubviews()
         // 뷰 크기에 맞춰 그라디언트 크기 업데이트
@@ -311,26 +324,52 @@ final class OriginalCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         }
     }
     
-    func configure(_ data: HomeSectionEntity) {
+    func configure(ongoing: ContentsOngoingItemEntity) {
+        // TODO: 카드형 슬라이드용 매핑
         
-        title = data.title
+        showAnimatedGradientSkeleton(isPlaceholder: true)
+    }
+    
+    func configure(curation: ContentsCurationItemEntity) {
+        // TODO: 카드형 슬라이드용 매핑
         
-        scriptLabel.text = "“만나자 마자 바로 사귀기\n vs 썸만 100일 타기”"
-        titleImageView.image = UIImage(named: "mainBannerTitle")
-        mainImageView.image = UIImage(named: "BannerMock")
+        showAnimatedGradientSkeleton(isPlaceholder: true)
+    }
+    
+    func configure(banner: ContentsBannerItemEntity) {
+        // TODO: 카드형 슬라이드용 매핑
         
-        let mockBool = Bool.random()
-        if mockBool {
+        title = banner.bannerTitle
+
+        let bannerImagePathUrl = URL(string: banner.bannerImagePath)
+        let titleImagUrl = URL(string: banner.titleImagePath ?? "")
+        
+        mainImageView.kf.setImage(with: bannerImagePathUrl)
+        titleImageView.kf.setImage(with: titleImagUrl)
+        scriptLabel.text = banner.synopsis
+        
+        if banner.isShow {
             setBottomContainer(state: .play)
         } else {
             setBottomContainer(state: .alarm(date: Date()))
         }
+        let tagType: TagType = {
+            switch (banner.contractType ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased() {
+            case "LEZHIN_ORIGINAL":  return .lezhin
+            case "BOMTOON_ORIGINAL": return .bomtoon
+            case "GENERAL_ORIGINAL": return .original
+            default:                 return .onlyTag  // nil, "OTHERS", 그 외
+            }
+        }()
         
-        makeSignatureInfoView(titleText: "12주간 로맨스 TOP 1 원작 웹툰", tagType: TagType.allCases.randomElement()!)
-        
-        
+        makeSignatureInfoView(titleText: banner.signatureText ?? "", tagType: tagType)
+        showAnimatedGradientSkeleton(isPlaceholder: false)
+    }
+    
+    
+    
+    func configure(_ data: HomeSectionEntity) {
         showAnimatedGradientSkeleton(isPlaceholder: data.isPlaceholder)
-        
     }
     
     func showAnimatedGradientSkeleton(isPlaceholder: Bool) {

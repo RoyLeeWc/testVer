@@ -7,8 +7,8 @@
 
 
 protocol MyListUseCaseProtocol {
+    
     func executeFetchWatchList() async throws -> [WatchHistoryEntity]
-    func executeFetchWishList() async throws -> [WishListEntity]
     func executeFetchPurchasedList() async throws -> [PurchasedContentEntity]
     
     func executeDeleteWatchList(items: [WatchHistoryEntity]) async throws
@@ -34,9 +34,6 @@ final class MyListUseCase: MyListUseCaseProtocol {
         return try await repository.fetchWatchList()
     }
     
-    func executeFetchWishList() async throws -> [WishListEntity] {
-        return try await repository.fetchWishList()
-    }
     
     func executeFetchPurchasedList() async throws -> [PurchasedContentEntity] {
         return try await repository.fetchPurchasedList()

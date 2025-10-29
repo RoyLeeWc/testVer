@@ -6,6 +6,7 @@
 
 import UIKit
 import Pulse
+import FacebookCore
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
@@ -51,4 +52,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // 6. 윈도우를 키 윈도우로 설정하고 화면 표시
         window.makeKeyAndVisible()
     }
+    
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        guard let url = URLContexts.first?.url else {
+            return
+        }
+        ApplicationDelegate.shared.application(UIApplication.shared, open: url, sourceApplication: nil, annotation: [UIApplication.OpenURLOptionsKey.annotation])
+    }
+    
 }

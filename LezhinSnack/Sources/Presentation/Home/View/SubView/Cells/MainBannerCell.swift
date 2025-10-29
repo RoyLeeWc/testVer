@@ -19,12 +19,13 @@ final class MainBannerCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         return uiImageView
     }()
     
-    
     private let signatureInfoView: UIView = {
         let view = UIView()
         view.isHidden = true
         return view
     }()
+    private let gradientLayer = CAGradientLayer()   // <- 레이어 보관
+    private let gradientLayerView = UIView()
     
     private let keywordTextView: UITextView = {
         let keywordTextView = UITextView()
@@ -113,8 +114,8 @@ final class MainBannerCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     
     private func setupUI() {
         
-        isSkeletonable = true
-        contentView.isSkeletonable = true
+//        isSkeletonable = true
+//        contentView.isSkeletonable = true
         
         contentView.addSubview(imageView)
         
@@ -122,6 +123,22 @@ final class MainBannerCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             make.edges.equalToSuperview()
         }
         
+        contentView.addSubview(gradientLayerView)
+        gradientLayerView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        
+        gradientLayerView.layer.addSublayer(gradientLayer)
+
+        // 원하는 색으로 (예: 아래쪽으로 짙어지는 어두운 그라데이션)
+
+        gradientLayer.colors = [
+            UIColor(red: 0.04, green: 0.04, blue: 0.05, alpha: 0).cgColor,
+            UIColor(red: 0.04, green: 0.04, blue: 0.05, alpha: 1).cgColor
+        ]
+        gradientLayer.locations = [0.7, 1.0]
+        gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
+        gradientLayer.endPoint   = CGPoint(x: 0.5, y: 1)
         
         contentView.addSubview(signatureInfoView)
         signatureInfoView.snp.makeConstraints { make in
@@ -170,21 +187,56 @@ final class MainBannerCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         }
     }
     
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        gradientLayer.frame = gradientLayerView.bounds
+        CATransaction.commit()
+    }
     
-    func configure(_ data: HomeSectionEntity) {
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        reset()
+    }
+    
+    func reset() {
+        // 이전 상태 정리
+        bannerTitleImageView.image = nil
+        imageView.image = nil
+        keywordTextView.text = ""
+        rightImageView.image = nil
+        infoLabel.text = ""
+    }
+    
+    func configure(ranking: ContentsRankingItemEntity) {
+        showAnimatedGradientSkeleton(isPlaceholder: true)
+    }
+    
+    func configure(ongoing: ContentsOngoingItemEntity) {
+        showAnimatedGradientSkeleton(isPlaceholder: true)
+    }
+    
+    func configure(banner: ContentsBannerItemEntity) {
+
+        let bannerImagePathUrl = URL(string: banner.bannerImagePath)
+        let titleImagUrl = URL(string: banner.titleImagePath ?? "")
         
-        
-        if !data.isPlaceholder {
-            bannerTitleImageView.image = UIImage(named: "mainBannerTitle")
-            imageView.image = UIImage(named: "BannerMock")
-            bannerTitleImageView.isHidden = false
-            imageView.isHidden = false
-            keywordTextView.isHidden = false
-            originalContentTagView.isHidden = false
-            signatureInfoView.isHidden = false
-            rightImageView.isHidden = false
-            infoLabel.isHidden = false
+        if let signatureImagePath = banner.signatureImagePath {
+            let signatureImageUrl = URL(string: signatureImagePath)
+            rightImageView.kf.setImage(with: signatureImageUrl)
         }
+        
+        imageView.kf.setImage(with: bannerImagePathUrl)
+        bannerTitleImageView.kf.setImage(with: titleImagUrl)
+
+        bannerTitleImageView.isHidden = false
+        imageView.isHidden = false
+        keywordTextView.isHidden = false
+        signatureInfoView.isHidden = false
+        rightImageView.isHidden = false
+        infoLabel.isHidden = false
+        
         
         let attributedText = NSMutableAttributedString()
         let attributes: [NSAttributedString.Key: Any] = [
@@ -192,22 +244,64 @@ final class MainBannerCell: UICollectionViewCell, UIGestureRecognizerDelegate {
             .foregroundColor: UIColor.white
         ]
         
-        let keywords = ["키워드1", "키워드2", "키워드3", "키워드4", "키워드5"]
+        let keywords = banner.keywordNames
         let keywordsString = keywords.joined(separator: " · ")
         
         attributedText.append(NSAttributedString(string: keywordsString, attributes: attributes))
         keywordTextView.attributedText = attributedText
+         
         
         
-        makeSignatureInfoView(infoText: "레진코믹스\n12주간 로맨스 TOP1 원작 웹툰",
-                              tagType: TagType.allCases.randomElement()!)
+        
+        if let signatureText = banner.signatureText {
+            let tagType: TagType = {
+                switch (banner.contractType ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased() {
+                case "LEZHIN_ORIGINAL":  return .lezhin
+                case "BOMTOON_ORIGINAL": return .bomtoon
+                case "GENERAL_ORIGINAL": return .original
+                default:                 return .onlyTag  // nil, "OTHERS", 그 외
+                }
+            }()
+            let signatureBgColor = banner.signatureBackgroundColor
+            
+            if tagType == .onlyTag{
+                originalContentTagView.isHidden = true
+            } else {
+                originalContentTagView.isHidden = false
+            }
+            
+            
+            let markTypes: [LZSnackMarkType] = {
+                var seen = Set<BadgeType>()              // 타입 기준 중복 제거
+                return (banner.badges ?? [])
+                    .filter { seen.insert($0.type).inserted }
+                    .compactMap { LZSnackMarkType(badge: $0) }   
+                    .prefix(3)
+                    .map { $0 }
+            }()
+            
+            makeSignatureInfoView(infoText: signatureText,
+                                  tagType: tagType,
+                                  backgroundColor: signatureBgColor ?? "#861E34",
+                                  markTypes: markTypes)
+            
+        } else {
+            makeSignatureInfoView(infoText: "레진코믹스\n12주간 로맨스 TOP1 원작 웹툰",
+                                  tagType: TagType.allCases.randomElement()!,
+            backgroundColor: "#861E34")
+        }
         
         
+        
+        showAnimatedGradientSkeleton(isPlaceholder: false)
+    }
+    
+    func configure(_ data: HomeSectionEntity) {
         showAnimatedGradientSkeleton(isPlaceholder: data.isPlaceholder)
     }
     
     
-    func makeSignatureInfoView(infoText: String, tagType: TagType) {
+    func makeSignatureInfoView(infoText: String, tagType: TagType, backgroundColor: String , markTypes: [LZSnackMarkType] = []) {
         // 기존 뷰 제거
         signatureInfoView.subviews.forEach { $0.removeFromSuperview() }
         rightImageView.removeFromSuperview()
@@ -218,16 +312,16 @@ final class MainBannerCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         switch tagType {
             
         case .lezhin:
-            signatureInfoView.backgroundColor = UIColor.init(hexString: "#861E34")
+            signatureInfoView.backgroundColor = UIColor.init(hexString: backgroundColor)
         case .bomtoon:
-            infoText = "봄툰\n12주간 로맨스 TOP1 원작 웹툰12주간 로맨스 TOP1 원작 웹툰12주간 로맨스 TOP1 원작 웹툰12주간 로맨스 TOP1 원작 웹툰12주간 로맨스 TOP1 원작 웹툰"
-            signatureInfoView.backgroundColor = UIColor.init(hexString: "#861E34")
+//            infoText = "봄툰\n12주간 로맨스 TOP1 원작 웹툰12주간 로맨스 TOP1 원작 웹툰12주간 로맨스 TOP1 원작 웹툰12주간 로맨스 TOP1 원작 웹툰12주간 로맨스 TOP1 원작 웹툰"
+            signatureInfoView.backgroundColor = UIColor.init(hexString: backgroundColor)
         case .original:
-            infoText = "미생 김원석 감독이 디렉팅한 작품"
-            signatureInfoView.backgroundColor = UIColor(.backgroundDefault)
+//            infoText = "미생 김원석 감독이 디렉팅한 작품"
+            signatureInfoView.backgroundColor = UIColor.init(hexString: backgroundColor)
         case .onlyTag:
             signatureInfoView.backgroundColor = .clear
-            makeTagOnlySignatureInfoView()
+            makeTagOnlySignatureInfoView(markTypes: markTypes)
             return
         }
 
@@ -294,11 +388,9 @@ final class MainBannerCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     
     
     
-    private func makeTagOnlySignatureInfoView() {
-        // 1. 표시할 타입 배열
-        let markTypes: [LZSnackMarkType] = [.ranking, .popularBest, .newWork]
+    private func makeTagOnlySignatureInfoView(markTypes: [LZSnackMarkType]) {
 
-        // 2. 스택뷰 생성
+        //  스택뷰 생성
         let marksStackView = UIStackView()
         marksStackView.axis = .horizontal
         marksStackView.alignment = .center
@@ -306,14 +398,14 @@ final class MainBannerCell: UICollectionViewCell, UIGestureRecognizerDelegate {
         // group 너비를 내부 컨텐츠에 딱 맞추기 위해 hugging 우선순위 높임
         marksStackView.setContentHuggingPriority(.required, for: .horizontal)
 
-        // 3. 부모 뷰에 추가 & 중앙 제약
+        //  부모 뷰에 추가 & 중앙 제약
         signatureInfoView.addSubview(marksStackView)
         marksStackView.snp.makeConstraints { make in
             make.center.equalToSuperview()
             make.height.equalTo(40)    // 전체 스택뷰 높이 고정
         }
 
-        // 4. 마크 뷰 3개 추가
+        //  마크 뷰 3개 추가
         markTypes.forEach { type in
             let markView = LZSnackMarkView(type: type,
                                        leadingTrailingInset: 11,
