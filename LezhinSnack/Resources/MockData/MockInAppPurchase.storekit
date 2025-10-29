@@ -1,0 +1,296 @@
+{
+  "appPolicies" : {
+    "eula" : "",
+    "policies" : [
+      {
+        "locale" : "en_US",
+        "policyText" : "",
+        "policyURL" : ""
+      }
+    ]
+  },
+  "identifier" : "2BB42087",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "0.99",
+      "familyShareable" : false,
+      "internalID" : "A1B2C3D4",
+      "localizations" : [
+        {
+          "description" : "First consumable item",
+          "displayName" : "First Purchase",
+          "locale" : "en_US"
+        },
+        {
+          "description" : "첫 번째 레진스낵 인앱 구매 아이템",
+          "displayName" : "첫 번째 구매 0.99",
+          "locale" : "ko"
+        }
+      ],
+      "productID" : "com.lezhin.snack.consumable1",
+      "referenceName" : "소모성_아이템_1",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "1.99",
+      "familyShareable" : false,
+      "internalID" : "B2C3D4E5",
+      "localizations" : [
+        {
+          "description" : "Second consumable item",
+          "displayName" : "Second Purchase",
+          "locale" : "en_US"
+        },
+        {
+          "description" : "두 번째 레진스낵 인앱 구매 아이템",
+          "displayName" : "두 번째 구매 1.99",
+          "locale" : "ko"
+        }
+      ],
+      "productID" : "com.lezhin.snack.consumable2",
+      "referenceName" : "소모성_아이템_2",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "2.99",
+      "familyShareable" : false,
+      "internalID" : "C3D4E5F6",
+      "localizations" : [
+        {
+          "description" : "Third consumable item",
+          "displayName" : "Third Purchase",
+          "locale" : "en_US"
+        },
+        {
+          "description" : "세 번째 레진스낵 인앱 구매 아이템",
+          "displayName" : "세 번째 구매 2.99",
+          "locale" : "ko"
+        }
+      ],
+      "productID" : "com.lezhin.snack.consumable3",
+      "referenceName" : "소모성_아이템_3",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "3.99",
+      "familyShareable" : false,
+      "internalID" : "D4E5F6A7",
+      "localizations" : [
+        {
+          "description" : "Fourth consumable item",
+          "displayName" : "Fourth Purchase",
+          "locale" : "en_US"
+        },
+        {
+          "description" : "네 번째 레진스낵 인앱 구매 아이템",
+          "displayName" : "네 번째 구매 3.99",
+          "locale" : "ko"
+        }
+      ],
+      "productID" : "com.lezhin.snack.consumable4",
+      "referenceName" : "소모성_아이템_4",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "4.99",
+      "familyShareable" : false,
+      "internalID" : "E5F6A7B8",
+      "localizations" : [
+        {
+          "description" : "Fifth consumable item",
+          "displayName" : "Fifth Purchase",
+          "locale" : "en_US"
+        },
+        {
+          "description" : "다섯 번째 레진스낵 인앱 구매 아이템",
+          "displayName" : "다섯 번째 구매 4.99",
+          "locale" : "ko"
+        }
+      ],
+      "productID" : "com.lezhin.snack.consumable5",
+      "referenceName" : "소모성_아이템_5",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "5.99",
+      "familyShareable" : false,
+      "internalID" : "F6A7B8C9",
+      "localizations" : [
+        {
+          "description" : "Sixth consumable item",
+          "displayName" : "Sixth Purchase",
+          "locale" : "en_US"
+        },
+        {
+          "description" : "여섯 번째 레진스낵 인앱 구매 아이템",
+          "displayName" : "여섯 번째 구매 5.99",
+          "locale" : "ko"
+        }
+      ],
+      "productID" : "com.lezhin.snack.consumable6",
+      "referenceName" : "소모성_아이템_6",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_compatibilityTimeRate" : {
+      "3" : 6
+    },
+    "_failTransactionsEnabled" : false,
+    "_locale" : "ko",
+    "_storefront" : "KOR",
+    "_storeKitErrors" : [
+      {
+        "current" : {
+          "index" : 2,
+          "type" : "generic"
+        },
+        "enabled" : false,
+        "name" : "Load Products"
+      },
+      {
+        "current" : {
+          "index" : 1,
+          "type" : "purchase"
+        },
+        "enabled" : false,
+        "name" : "Purchase"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Verification"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "App Store Sync"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Subscription Status"
+      },
+      {
+        "current" : {
+          "index" : 3,
+          "type" : "generic"
+        },
+        "enabled" : false,
+        "name" : "App Transaction"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Manage Subscriptions Sheet"
+      },
+      {
+        "current" : {
+          "index" : 0,
+          "type" : "refund request"
+        },
+        "enabled" : false,
+        "name" : "Refund Request Sheet"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Offer Code Redeem Sheet"
+      }
+    ],
+    "_timeRate" : 1003
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "2BD5F9ED",
+      "localizations" : [
+        {
+          "description" : "Subscription group for membership",
+          "displayName" : "Membership Subscription Group",
+          "locale" : "en_US"
+        },
+        {
+          "description" : "멤버십을 위한 구독 그룹",
+          "displayName" : "멤버십 구독 그룹",
+          "locale" : "ko"
+        }
+      ],
+      "name" : "구독형_멤버십_그룹",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "9.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "A7B8C9D0",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Monthly subscription access",
+              "displayName" : "Monthly Subscription",
+              "locale" : "en_US"
+            },
+            {
+              "description" : "한 달 이용 권한",
+              "displayName" : "월간 구독",
+              "locale" : "ko"
+            }
+          ],
+          "productID" : "com.lezhin.snack.subscription.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "구독형_월간_멤버십",
+          "subscriptionGroupID" : "2BD5F9ED",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "99.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "B8C9D0E1",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Annual subscription access",
+              "displayName" : "Annual Subscription",
+              "locale" : "en_US"
+            },
+            {
+              "description" : "1년 이용 권한",
+              "displayName" : "연간 구독",
+              "locale" : "ko"
+            }
+          ],
+          "productID" : "com.lezhin.snack.subscription.annual",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "구독형_연간_멤버십",
+          "subscriptionGroupID" : "2BD5F9ED",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

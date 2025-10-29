@@ -1,0 +1,30 @@
+{
+    
+    "home_ko": "홈",
+    "recommend_ko": "맛보기",
+    "mylist_ko": "내 목록",
+    "mypage_ko": "마이",
+    
+    "coinCharge_ko": "코인 충전소",
+    
+    "mostViewed_ko": "가장 많이 본 작품",
+    
+    "watchHistoryHeaderTitle_ko": "내가 시청중인 작품",
+    "watchHistoryHeaderMoreButtonTitle_ko": "더보기",
+    
+    "originalHeaderTitle_ko": "보장된 맛,\n웹툰 원작 드라마!",
+    
+    "play_ko": "재생하기",
+    
+    "navBack_ko": "뒤로가기",
+    
+    "login_ko": "로그인",
+    "search_ko": "검색",
+    "myWallet_ko": "내 지갑",
+    "viewer_ko": "뷰어",
+    
+    "changeLanguage_ko" : "언어 변경",
+    
+    "faq_ko" : "FAQ" ,
+    
+}

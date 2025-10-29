@@ -1,0 +1,463 @@
+//
+//  PurchasedContentsViewController.swift
+//  LezhinSnack
+//
+//  Created by 신진우 on 4/20/25.
+//
+
+
+import UIKit
+import Combine
+
+final class PurchasedContentListViewController: UIViewController {
+    
+    enum Section {
+        case main
+    }
+    
+    private var collectionView: UICollectionView!
+    private var dataSource: UICollectionViewDiffableDataSource<Section, PurchasedContentEntity>!
+    private var overlayEditView: UIView?
+    
+    
+    private var floatingActionButton: UIButton = {
+        let floatingActionButton = UIButton(type: .system)
+        floatingActionButton.setTitle("편집_N개_삭제".localized(with: 0), for: .normal)
+        floatingActionButton.titleLabel?.font = .pretendardSemiBold(size: 16)
+        floatingActionButton.backgroundColor = UIColor(.fillDisabled)
+        floatingActionButton.tintColor = UIColor(.foregroundDisabled)
+        floatingActionButton.layer.cornerRadius = 6
+        
+        floatingActionButton.isHidden = true
+        
+        return floatingActionButton
+    }()
+    
+    private let emptyContentsLabel: UILabel = {
+        let label = UILabel()
+        label.font = .pretendardMedium(size: 14)
+        label.textColor = .white
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        return label
+    }()
+    
+    private var totalCheckBox: LZSnackCheckBox?
+    
+    private var isEditingMode = false {
+        didSet {
+            // 화면에 보이는 셀 모두에 편집 모드 플래그 전달
+            collectionView.visibleCells
+                .compactMap { $0 as? WishCell }
+                .forEach { $0.isEditingMode = isEditingMode }
+            
+            collectionView.allowsSelection = isEditingMode
+            collectionView.allowsMultipleSelection = isEditingMode
+            
+            var snapshot = dataSource.snapshot()
+            
+            // 2) 재구성할 아이템 식별자 배열: 전체를 재구성하려면 itemIdentifiers 사용
+            let allItems = snapshot.itemIdentifiers(inSection: .main)
+            snapshot.reconfigureItems(allItems)
+            
+            // 3) 스냅샷 재적용 (animatingDifferences: false = 레이아웃만 업데이트)
+            dataSource.apply(snapshot, animatingDifferences: false)
+            
+            
+            isEditingMode ? showOverlayView() : hideOverlayView()
+            floatingActionButton.isHidden = !isEditingMode
+            
+        }
+    }
+    
+    var items: [PurchasedContentEntity] = []
+    
+    let viewModel: PurchasedContentListViewModel
+    
+    var subscriptions = Set<AnyCancellable>()
+    
+    init(viewModel: PurchasedContentListViewModel) {
+        self.viewModel = viewModel
+        super.init(nibName: nil, bundle: nil)
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = UIColor(.backgroundDefault)
+        setupUI()
+        initializeEmptySnapshot()
+        bind()
+        fetchData()
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        isEditingMode = false
+    }
+    
+    private func setupUI() {
+        configureCollectionView()
+        configureFloatingButton()
+        configureEmptyContentLabel()
+        configureDataSource()
+    }
+    
+    private func bind() {
+        viewModel.$purchasedContentList
+            .compactMap { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] purchasedContentList in
+                guard let self else { return }
+                items.append(contentsOf: purchasedContentList)
+                self.applySnapshot(items: items)
+            }
+            .store(in: &subscriptions)
+    }
+    
+    private func initializeEmptySnapshot() {
+        var snapshot = NSDiffableDataSourceSnapshot<Section, PurchasedContentEntity>()
+        // 2) 섹션만 등록 (.main)
+        snapshot.appendSections([.main])
+        // 3) 아이템은 따로 append하지 않음 → 빈 상태
+        dataSource.apply(snapshot, animatingDifferences: false)
+    }
+    
+    private func fetchData() {
+        viewModel.fetchPurchasedContentList()
+    }
+    
+    private func configureFloatingButton() {
+        
+        view.addSubview(floatingActionButton)
+        floatingActionButton.snp.makeConstraints { make in
+            make.leading.trailing.equalTo(view.safeAreaLayoutGuide).inset(16)
+            make.bottom.equalTo(view.safeAreaLayoutGuide).offset(-8)
+            make.height.equalTo(56)
+        }
+        
+        floatingActionButton.addTarget(self, action: #selector(deleteSelectedItems), for: .touchUpInside)
+    }
+    
+    private func configureCollectionView() {
+        collectionView = UICollectionView(frame: .zero, collectionViewLayout: createLayout())
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
+        collectionView.allowsMultipleSelection = true
+        
+        collectionView.backgroundColor = UIColor(.backgroundDefault)
+        // 커스텀 셀 등록
+        
+        collectionView.register(PurchasedContentCell.self)
+        collectionView.register(MyListCommonHeader.self,
+                                forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader)
+        
+        view.addSubview(collectionView)
+        
+        collectionView.snp.makeConstraints { make in
+            make.top.equalTo(view.safeAreaLayoutGuide.snp.top)
+            make.leading.equalTo(view.safeAreaLayoutGuide.snp.leading)
+            make.trailing.equalTo(view.safeAreaLayoutGuide.snp.trailing)
+            make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom)
+        }
+        
+        collectionView.delegate = self
+        collectionView.addPullToRefresh { [weak self] in
+            self?.fetchData()
+        }
+    }
+    
+    private func configureEmptyContentLabel() {
+        emptyContentsLabel.text = "내목록_빈목록_타이틀".localized
+        collectionView.backgroundView = emptyContentsLabel
+    }
+    
+    private func createLayout() -> UICollectionViewLayout {
+        let itemSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0),
+                                              heightDimension: .fractionalHeight(1.0))
+        let item = NSCollectionLayoutItem(layoutSize: itemSize)
+        
+        let groupSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0),
+                                               heightDimension: .absolute(96))
+        
+        let group = NSCollectionLayoutGroup.horizontal(layoutSize: groupSize, subitem: item, count: 1)
+        
+        let section = NSCollectionLayoutSection(group: group)
+        
+        let headerSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0),
+                                                heightDimension: .absolute(64))
+        
+        let header = NSCollectionLayoutBoundarySupplementaryItem(
+            layoutSize: headerSize,
+            elementKind: UICollectionView.elementKindSectionHeader,
+            alignment: .top)
+        
+        section.boundarySupplementaryItems = [header]
+        
+        return UICollectionViewCompositionalLayout(section: section)
+    }
+    
+    private func showOverlayView() {
+        guard overlayEditView == nil else { return }
+        
+        let topSafeAreaInsetHeight = LZSUtil.getSafeAreaInsets().top
+        let topPadding: CGFloat = 20
+        
+        let overlay = LZSnackTouchPassthroughView()
+        overlay.backgroundColor = UIColor(.backgroundDefault)
+        tabmanParent?.view.addSubview(overlay)
+        overlay.snp.makeConstraints { make in
+            make.top.equalToSuperview()
+            make.leading.trailing.equalToSuperview()
+            make.height.equalTo(96 + topPadding + topSafeAreaInsetHeight)
+        }
+
+        // 3) close 버튼 추가
+        let closeButton = UIButton(type: .system)
+        let img = UIImage(named: "ic_close")?.resized(to: CGSize(width: 24, height: 24))
+        closeButton.setImage(img, for: .normal)
+        closeButton.tintColor = .white
+        closeButton.addTarget(self, action: #selector(toggleEditMode), for: .touchUpInside)
+
+        overlay.addSubview(closeButton)
+        
+        
+        closeButton.snp.makeConstraints { make in
+            make.trailing.equalToSuperview().inset(12)
+            make.top.equalToSuperview().inset(topSafeAreaInsetHeight + 8)
+            make.size.equalTo(40)
+        }
+        
+        let editTitleLabel = UILabel()
+        editTitleLabel.font = .pretendardBold(size: 20)
+        editTitleLabel.textColor = .white
+        editTitleLabel.text = "편집_버튼_타이틀".localized
+        
+        overlay.addSubview(editTitleLabel)
+        
+        editTitleLabel.snp.makeConstraints { make in
+            make.leading.equalToSuperview().inset(20)
+            make.centerY.equalTo(closeButton)
+        }
+        
+        
+        let totalCheckBox = LZSnackCheckBox()
+        self.totalCheckBox = totalCheckBox
+        
+        overlay.addSubview(totalCheckBox)
+        totalCheckBox.snp.makeConstraints { make in
+            make.leading.equalToSuperview().offset(16)
+            make.width.height.equalTo(24)
+            make.bottom.equalToSuperview().offset(-13)
+        }
+        
+        totalCheckBox.setState(.unchecked)
+        
+        totalCheckBox.addTarget(self,
+                                action: #selector(toggleAllCheckboxes(_:)),
+                                for: .valueChanged)
+        
+        let totalCheckBoxTitle = UILabel()
+        totalCheckBoxTitle.font = .pretendardMedium(size: 16)
+        totalCheckBoxTitle.textColor = .white
+        totalCheckBoxTitle.text = "편집_전체선택_타이틀".localized
+        
+        overlay.addSubview(totalCheckBoxTitle)
+        totalCheckBoxTitle.snp.makeConstraints { make in
+            make.leading.equalTo(totalCheckBox.snp.trailing).offset(4)
+            make.centerY.equalTo(totalCheckBox)
+        }
+
+        overlayEditView = overlay
+    }
+    
+    private func hideOverlayView() {
+        overlayEditView?.removeFromSuperview()
+        overlayEditView = nil
+        totalCheckBox = nil
+    }
+    
+    private func configureDataSource() {
+        // Diffable Data Source 설정: 커스텀 셀 사용
+        dataSource = UICollectionViewDiffableDataSource<Section, PurchasedContentEntity>(collectionView: collectionView) { [weak self] collectionView, indexPath, item -> UICollectionViewCell? in
+            guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: PurchasedContentCell.reuseIdentifier, for: indexPath) as? PurchasedContentCell else { return nil }
+            guard let self = self else { return nil }
+            cell.isEditingMode = self.isEditingMode
+            cell.configure(with: item)
+            cell.updateEditingMode()
+            
+            return cell
+        }
+        
+        dataSource.supplementaryViewProvider = { [weak self] collectionView, kind, indexPath in
+            guard let headerView = collectionView.dequeueReusableSupplementaryView(
+                ofKind: kind,
+                withReuseIdentifier: MyListCommonHeader.reuseIdentifier,
+                for: indexPath) as? MyListCommonHeader else {
+                return UICollectionReusableView()
+            }
+            
+            headerView.editButton.addTarget(self,
+                                            action: #selector(self?.toggleEditMode),
+                                            for: .touchUpInside)
+            headerView.historySortButton.addTarget(self,
+                                                   action: #selector(self?.didTapSortButton(_:)),
+                                        for: .touchUpInside)
+            
+            
+            return headerView
+            
+        }
+        
+    }
+    
+    private func applySnapshot(items: [PurchasedContentEntity]) {
+        collectionView.refreshControl?.endRefreshing()
+        var snapshot = NSDiffableDataSourceSnapshot<Section, PurchasedContentEntity>()
+        snapshot.appendSections([.main])
+        snapshot.appendItems(items)
+        dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
+            self?.updateEmptyState()
+        }
+    }
+}
+
+
+
+extension PurchasedContentListViewController: UICollectionViewDelegate {
+    
+    @objc private func didTapSortButton(_ sender: UIButton) {
+        
+        if isEditingMode { return }
+        
+        presentDropdownMenu(
+            anchor: sender,
+            menuWidth: max(sender.bounds.width, 120),
+            current: WatchHistorySortOption.recent
+        ) { [weak self] option in
+            guard let self = self else { return }
+            sender.setTitle(option.displayName, for: .normal)
+            self.applySort(option)
+        }
+    }
+    
+    private func applySort(_ option: WatchHistorySortOption) {
+        switch option {
+        case .recent:
+            print("최근 순으로 정렬")
+        case .old:
+            print("오래된 순으로 정렬")
+        }
+        // 데이터 정렬 후 snapshot 갱신 …
+    }
+
+    
+    @objc private func toggleAllCheckboxes(_ sender: LZSnackCheckBox) {
+        switch sender.checkboxState {
+        case .unchecked:
+            collectionView.deselectAll()
+            updateFloatingActionButton()
+        case .checked:
+            collectionView.selectAll(using: dataSource)
+            updateFloatingActionButton()
+        case .partial:
+            break
+        }
+    }
+    
+    @objc private func toggleEditMode() {
+        isEditingMode.toggle()
+    }
+    
+    @objc func deleteSelectedItems() {
+        guard let selectedIndexPaths = collectionView.indexPathsForSelectedItems else { return }
+        let selectedItems = selectedIndexPaths.compactMap { dataSource.itemIdentifier(for: $0) }
+        
+        let popup = LZSnackAlertPopupView(
+            width: 320,
+            height: 242,
+            title: "선택한 \(selectedItems.count)개의 작품을 목록에서 삭제하시겠습니까?",
+            message: "구매 목록에서 삭제해도 감상은 가능하며, 감상 시 해당 작품은 다시 구매 목록에 추가됩니다.",
+            leftButtonTitle: "취소",
+            leftHandler: {
+                
+            },
+            rightButtonTitle: "삭제",
+            rightHandler: { [weak self] in
+                self?.items.removeAll(where: { selectedItems.contains($0) })
+                guard var snapshot = self?.dataSource.snapshot() else { return }
+                snapshot.deleteItems(selectedItems)
+                self?.dataSource.apply(snapshot, animatingDifferences: true) { [weak self] in
+                    self?.isEditingMode = false
+                    let toastView = LZSnackToastView(text: "삭제가 완료되었습니다.", showsIcon: false)
+                    
+                    guard let self = self else { return }
+                    LZSnackToastHelper.showOnce(on: self.view, toast: toastView,duration: 5.0)
+                    self.updateEmptyState()
+                }
+            }
+        )
+        popup.show()
+    }
+    
+    // 셀 선택 처리
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        updateHeaderCheckbox()
+        updateFloatingActionButton()
+    }
+    
+    func collectionView(_ collectionView: UICollectionView, didDeselectItemAt indexPath: IndexPath) {
+        updateHeaderCheckbox()
+        updateFloatingActionButton()
+    }
+    
+    private func updateEmptyState() {
+        let snapshot = dataSource.snapshot()
+        let itemCount = snapshot.numberOfItems
+        
+        collectionView.isHidden = false
+        
+        // itemCount가 0일 때만 backgroundView(빈 상태 레이블)를 보여주고,
+        // 그렇지 않으면 backgroundView를 숨겨서 셀만 보이게 함
+        collectionView.backgroundView?.isHidden = (itemCount != 0)
+    }
+    
+    private func updateHeaderCheckbox() {
+        let state = collectionView.selectionState(
+            dataSource: dataSource,
+            sectionID: .main, sectionIndex: 0
+        )
+        switch state {
+        case .unchecked:
+            guard let totalCheckBox = totalCheckBox else { return }
+            totalCheckBox.setState(.unchecked)
+        case .partial:
+            guard let totalCheckBox = totalCheckBox else { return }
+            totalCheckBox.setState(.partial)
+        case .checked:
+            guard let totalCheckBox = totalCheckBox else { return }
+            totalCheckBox.setState(.checked)
+        }
+    }
+    
+    
+    private func updateFloatingActionButton() {
+        guard let selectedIndexPaths = collectionView.indexPathsForSelectedItems else { return }
+        let selectedItems = selectedIndexPaths.compactMap { dataSource.itemIdentifier(for: $0) }
+        let selectedItemsString = "편집_N개_삭제".localized(with: selectedItems.count)
+        
+        UIView.performWithoutAnimation {
+            floatingActionButton.setTitle(selectedItemsString, for: .normal)
+            
+            if selectedItems.count > 0 {
+                floatingActionButton.backgroundColor = UIColor(.brandRed)
+                floatingActionButton.tintColor = .white
+            } else {
+                floatingActionButton.backgroundColor = UIColor(.fillDisabled)
+                floatingActionButton.tintColor = UIColor(.foregroundDisabled)
+            }
+        }
+    }
+}
