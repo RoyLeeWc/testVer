@@ -218,12 +218,16 @@ final class ViewerViewController: UIViewController {
             }
             .store(in: &subscriptions)
         
-        vm.keepEpisodeIds
-            .receive(on: RunLoop.main)
-            .sink { [weak self] keep in
-                self?.engine.shrink(keeping: keep)
-            }
-            .store(in: &subscriptions)
+        // ⚠️ shrink() 비활성화 - DRM AVContentKeySession 크래시 방지
+        // keepEpisodeIds 기반 asset 해제 시 AVContentKeySession이 해제되어
+        // "AVContentKeyRequest can no longer process key responses" 크래시 발생
+        // 한번 로드된 asset은 메모리에 유지하여 안정성 확보
+        // vm.keepEpisodeIds
+        //     .receive(on: RunLoop.main)
+        //     .sink { [weak self] keep in
+        //         self?.engine.shrink(keeping: keep)
+        //     }
+        //     .store(in: &subscriptions)
         
         vm.$detail
             .receive(on: RunLoop.main)

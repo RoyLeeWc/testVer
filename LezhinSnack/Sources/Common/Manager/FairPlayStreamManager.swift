@@ -23,6 +23,18 @@ final class FairPlayStreamManager: NSObject, PallyConFPSLicenseDelegate, AVAsset
 
     // contentId ↔ AVURLAsset 만 저장
     var drmAssets: [ String: AVURLAsset ] = [:]
+
+    /// Asset 가져오기
+    func asset(for contentId: String) -> AVURLAsset? {
+        return drmAssets[contentId]
+    }
+
+    /// Asset 해제
+    func releaseAsset(forContentId contentId: String) {
+        drmAssets.removeValue(forKey: contentId)
+        // PallyConFPSSDK에는 명시적인 release가 없으므로 dictionary에서만 제거
+    }
+
     /// DRM 준비: AVURLAsset 에만 리소스 로더(delegate) 설정
     func prepareDRM(videoId: String, url: URL, token: String, contentId: String, cfCookieHeader: String) {
         
