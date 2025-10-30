@@ -173,8 +173,17 @@ final class ViewerViewModel {
                 
                 // 4) 초기 센터 index 산출물
                 let initialAlias = input.episodeAlias ?? detail?.firstEpisodeAlias ?? "1"
-                let initialIndex = self.aliasToIndex[initialAlias] ?? 0
-                self.centerIndex = min(max(0, initialIndex), max(0, mapped.count - 1))
+
+                // aliasToIndex에서 초기 회차 찾기
+                if let foundIndex = self.aliasToIndex[initialAlias] {
+                    self.centerIndex = min(max(0, foundIndex), max(0, mapped.count - 1))
+                    print("✅ [ViewerViewModel] 초기 회차 설정: alias=\(initialAlias) → index=\(foundIndex)")
+                } else {
+                    // ⚠️ 매핑에서 찾지 못함 - fallback to 0
+                    self.centerIndex = 0
+                    print("⚠️ [ViewerViewModel] 초기 회차 alias '\(initialAlias)'를 찾을 수 없어 첫 번째 회차로 fallback")
+                    print("   사용 가능한 alias 목록: \(Array(self.aliasToIndex.keys.sorted()))")
+                }
                 
                 // 5) 3칸 프리로드
                 await self.preloadWindow(around: self.centerIndex)
@@ -208,16 +217,29 @@ final class ViewerViewModel {
     
     // MARK: Preload Core
     /// center 기준으로 [center-1, center, center+1]만 보장 (이미 준비/요청 중이면 스킵)
+    /// ✅ Center를 먼저 로드하여 Race Condition 방지
     @MainActor
     private func preloadWindow(around center: Int) async {
         let indices = [center-1, center, center+1].filter { items.indices.contains($0) }
-        
+
         // shrink 용 keep 먼저 전송
         keepEpisodeIds.send(Set(indices.map { items[$0].episodeId }))
 
-        
+        // ✅ STEP 1: Center (현재 보는 비디오) 먼저 로드 - 우선순위 보장
+        if indices.contains(center) {
+            if self.viewerType == .tastedViewer {
+                await self.ensurePreparedTasted(index: center)
+            } else {
+                await self.ensurePrepared(index: center)
+            }
+        }
+
+        // ✅ STEP 2: 양옆 비디오를 병렬로 로드
+        let sideIndices = indices.filter { $0 != center }
+        guard !sideIndices.isEmpty else { return }
+
         await withTaskGroup(of: Void.self) { group in
-            for idx in indices {
+            for idx in sideIndices {
                 group.addTask { [weak self] in
                     guard let self else { return }
                     if self.viewerType == .tastedViewer {
@@ -228,7 +250,7 @@ final class ViewerViewModel {
                 }
             }
         }
-        
+
     }
     
     // 마지막 셀 재생 완료에서 호출
@@ -354,7 +376,15 @@ final class ViewerViewModel {
                 drmType: .fairplay,
                 drmLicenseUserId: drmLicenseUserId
             )
-            guard let url = URL(string: v.manifestPath) else { return }
+
+            // ✅ URL 안전 변환 (한글, 특수문자, 1080p 등 처리)
+            guard let url = URLEncodingHelper.safeURL(from: v.manifestPath) else {
+                await gateFinishPrepareFail(epId: epId)
+                await MainActor.run {
+                    self.errors.send(ViewerUIError(message: "Invalid manifest URL: \(v.manifestPath)", code: "URL_PARSE_ERROR"))
+                }
+                return
+            }
             let pb = ViewerPlayback(
                 episodeId: v.episodeId,
                 contentId: v.contentsId,
@@ -380,7 +410,7 @@ final class ViewerViewModel {
     private func ensurePrepared(index: Int) async {
         // ❶ 메인에서 안전하게 epId를 "예약"
         guard let epId = await gateStartPrepare(index: index) else { return }
-        
+
         do {
             // ❷ 네트워크는 백그라운드에서
             let v = try await displayVideoUseCase.executeFetchDisplayVideo(
@@ -388,8 +418,13 @@ final class ViewerViewModel {
                 drmType: DRMType(rawValue: drmType) ?? .fairplay,
                 drmLicenseUserId: drmLicenseUserId
             )
-            guard let url = URL(string: v.manifestPath) else {
+
+            // ✅ URL 안전 변환 (한글, 특수문자, 1080p 등 처리)
+            guard let url = URLEncodingHelper.safeURL(from: v.manifestPath) else {
                 await gateFinishPrepareFail(epId: epId)
+                await MainActor.run {
+                    self.errors.send(ViewerUIError(message: "Invalid manifest URL: \(v.manifestPath)", code: "URL_PARSE_ERROR"))
+                }
                 return
             }
             
